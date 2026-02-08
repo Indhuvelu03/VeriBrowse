@@ -1,0 +1,388 @@
+/**
+ * ReportGenerator - Document Generation Service
+ * 
+ * Built with: Claude Sonnet 4.5
+ * Date: February 7, 2026
+ * 
+ * Responsibilities:
+ * - Generate reports from crawled content
+ * - Support multiple formats (.txt, .md, .html)
+ * - Save files to disk
+ * - Format content for readability
+ */
+
+import fs from 'fs';
+import path from 'path';
+import { app } from 'electron';
+
+class ReportGenerator {
+    constructor() {
+        this.reportsDir = path.join(app.getPath('userData'), 'reports');
+        this.ensureReportsDirectory();
+    }
+
+    /**
+     * Ensure reports directory exists
+     */
+    ensureReportsDirectory() {
+        if (!fs.existsSync(this.reportsDir)) {
+            fs.mkdirSync(this.reportsDir, { recursive: true });
+        }
+    }
+
+    /**
+     * Generate a report from content
+     * @param {Object} options - { content, title, format, metadata }
+     * @returns {Object} - { success, filePath, fileName }
+     */
+    async generateReport(options) {
+        const {
+            content,
+            title = 'Report',
+            format = 'md',
+            metadata = {},
+            includeMetadata = true
+        } = options;
+
+        try {
+            // Sanitize filename
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const sanitizedTitle = this.sanitizeFilename(title);
+            const fileName = `${sanitizedTitle}_${timestamp}.${format}`;
+            const filePath = path.join(this.reportsDir, fileName);
+
+            let formattedContent = '';
+
+            switch (format) {
+                case 'txt':
+                    formattedContent = this.formatAsText(content, title, metadata, includeMetadata);
+                    break;
+                case 'md':
+                    formattedContent = this.formatAsMarkdown(content, title, metadata, includeMetadata);
+                    break;
+                case 'html':
+                    formattedContent = this.formatAsHtml(content, title, metadata, includeMetadata);
+                    break;
+                default:
+                    throw new Error(`Unsupported format: ${format}`);
+            }
+
+            // Write file
+            fs.writeFileSync(filePath, formattedContent, 'utf8');
+
+            return {
+                success: true,
+                filePath,
+                fileName,
+                format,
+                message: `Report saved: ${fileName}`
+            };
+        } catch (error) {
+            console.error('[ReportGenerator] Error generating report:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Format content as plain text
+     * @param {String} content - Main content
+     * @param {String} title - Report title
+     * @param {Object} metadata - Additional metadata
+     * @param {Boolean} includeMetadata - Include metadata in output
+     * @returns {String} - Formatted text
+     */
+    formatAsText(content, title, metadata, includeMetadata) {
+        let text = '';
+        
+        text += '='.repeat(80) + '\n';
+        text += title.toUpperCase() + '\n';
+        text += '='.repeat(80) + '\n\n';
+
+        if (includeMetadata) {
+            text += `Generated: ${new Date().toLocaleString()}\n`;
+            
+            if (metadata.url) {
+                text += `Source: ${metadata.url}\n`;
+            }
+            
+            if (metadata.author) {
+                text += `Author: ${metadata.author}\n`;
+            }
+            
+            text += '\n' + '-'.repeat(80) + '\n\n';
+        }
+
+        text += content + '\n\n';
+        
+        text += '-'.repeat(80) + '\n';
+        text += 'End of Report\n';
+        text += '='.repeat(80) + '\n';
+
+        return text;
+    }
+
+    /**
+     * Format content as Markdown
+     * @param {String} content - Main content
+     * @param {String} title - Report title
+     * @param {Object} metadata - Additional metadata
+     * @param {Boolean} includeMetadata - Include metadata in output
+     * @returns {String} - Formatted markdown
+     */
+    formatAsMarkdown(content, title, metadata, includeMetadata) {
+        let md = '';
+        
+        md += `# ${title}\n\n`;
+
+        if (includeMetadata) {
+            md += `---\n\n`;
+            md += `**Generated:** ${new Date().toLocaleString()}\n\n`;
+            
+            if (metadata.url) {
+                md += `**Source:** [${metadata.url}](${metadata.url})\n\n`;
+            }
+            
+            if (metadata.author) {
+                md += `**Author:** ${metadata.author}\n\n`;
+            }
+            
+            if (metadata.description) {
+                md += `**Description:** ${metadata.description}\n\n`;
+            }
+            
+            md += `---\n\n`;
+        }
+
+        md += content + '\n\n';
+        
+        md += `---\n\n`;
+        md += `*Report generated by VeriBrowse*\n`;
+
+        return md;
+    }
+
+    /**
+     * Format content as HTML
+     * @param {String} content - Main content
+     * @param {String} title - Report title
+     * @param {Object} metadata - Additional metadata
+     * @param {Boolean} includeMetadata - Include metadata in output
+     * @returns {String} - Formatted HTML
+     */
+    formatAsHtml(content, title, metadata, includeMetadata) {
+        const escapedTitle = this.escapeHtml(title);
+        const escapedContent = this.escapeHtml(content);
+
+        let html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${escapedTitle}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            line-height: 1.6;
+            color: #333;
+        }
+        h1 {
+            color: #1a1a1a;
+            border-bottom: 3px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .metadata {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            font-size: 0.9em;
+        }
+        .metadata strong {
+            color: #007bff;
+        }
+        .content {
+            white-space: pre-wrap;
+            font-size: 1em;
+        }
+        .footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+            text-align: center;
+            color: #666;
+            font-size: 0.85em;
+        }
+    </style>
+</head>
+<body>
+    <h1>${escapedTitle}</h1>
+`;
+
+        if (includeMetadata) {
+            html += `    <div class="metadata">\n`;
+            html += `        <strong>Generated:</strong> ${new Date().toLocaleString()}<br>\n`;
+            
+            if (metadata.url) {
+                html += `        <strong>Source:</strong> <a href="${this.escapeHtml(metadata.url)}">${this.escapeHtml(metadata.url)}</a><br>\n`;
+            }
+            
+            if (metadata.author) {
+                html += `        <strong>Author:</strong> ${this.escapeHtml(metadata.author)}<br>\n`;
+            }
+            
+            if (metadata.description) {
+                html += `        <strong>Description:</strong> ${this.escapeHtml(metadata.description)}<br>\n`;
+            }
+            
+            html += `    </div>\n`;
+        }
+
+        html += `    <div class="content">${escapedContent}</div>\n`;
+        html += `    <div class="footer">Report generated by VeriBrowse</div>\n`;
+        html += `</body>\n</html>`;
+
+        return html;
+    }
+
+    /**
+     * Generate a summary report from crawled data
+     * @param {Object} crawledData - Data from CrawlerService
+     * @param {String} summary - AI-generated summary
+     * @param {String} format - Output format
+     * @returns {Object} - Report generation result
+     */
+    async generateSummaryReport(crawledData, summary, format = 'md') {
+        const content = this.buildSummaryContent(crawledData, summary);
+        
+        return this.generateReport({
+            content,
+            title: crawledData.title || 'Page Summary',
+            format,
+            metadata: {
+                url: crawledData.url,
+                description: crawledData.metadata?.description
+            }
+        });
+    }
+
+    /**
+     * Build summary content from crawled data and AI summary
+     * @param {Object} crawledData - Crawled page data
+     * @param {String} summary - AI summary
+     * @returns {String} - Formatted content
+     */
+    buildSummaryContent(crawledData, summary) {
+        let content = '';
+
+        content += `## Summary\n\n${summary}\n\n`;
+
+        if (crawledData.structuredData?.headings?.length > 0) {
+            content += `## Key Topics\n\n`;
+            crawledData.structuredData.headings.forEach(h => {
+                content += `- ${h.text}\n`;
+            });
+            content += '\n';
+        }
+
+        if (crawledData.links?.length > 0) {
+            content += `## Referenced Links\n\n`;
+            crawledData.links.slice(0, 10).forEach(link => {
+                content += `- [${link.text}](${link.href})\n`;
+            });
+            content += '\n';
+        }
+
+        return content;
+    }
+
+    /**
+     * Sanitize filename
+     * @param {String} filename - Original filename
+     * @returns {String} - Sanitized filename
+     */
+    sanitizeFilename(filename) {
+        return filename
+            .replace(/[^a-z0-9]/gi, '_')
+            .replace(/_+/g, '_')
+            .substring(0, 50)
+            .toLowerCase();
+    }
+
+    /**
+     * Escape HTML special characters
+     * @param {String} text - Text to escape
+     * @returns {String} - Escaped text
+     */
+    escapeHtml(text) {
+        if (typeof text !== 'string') return '';
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    /**
+     * Get list of generated reports
+     * @returns {Array} - Array of report files
+     */
+    getReports() {
+        try {
+            const files = fs.readdirSync(this.reportsDir);
+            return files
+                .filter(f => /\.(txt|md|html)$/.test(f))
+                .map(fileName => {
+                    const filePath = path.join(this.reportsDir, fileName);
+                    const stats = fs.statSync(filePath);
+                    return {
+                        fileName,
+                        filePath,
+                        size: stats.size,
+                        created: stats.birthtime,
+                        modified: stats.mtime
+                    };
+                })
+                .sort((a, b) => b.created - a.created);
+        } catch (error) {
+            console.error('[ReportGenerator] Error listing reports:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Delete a report
+     * @param {String} fileName - Report filename
+     * @returns {Boolean} - Success status
+     */
+    deleteReport(fileName) {
+        try {
+            const filePath = path.join(this.reportsDir, fileName);
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('[ReportGenerator] Error deleting report:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Get reports directory path
+     * @returns {String} - Directory path
+     */
+    getReportsDirectory() {
+        return this.reportsDir;
+    }
+}
+
+export default new ReportGenerator();

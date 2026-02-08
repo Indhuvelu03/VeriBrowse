@@ -1,15 +1,71 @@
-import React, { useState } from 'react';
-import { Send, Sparkles, X, ChevronRight, ChevronLeft, Bot, Zap, Eye, Terminal, Activity, Radio, Plus, Clock, Search, Lightbulb, AtSign } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Send, Sparkles, X, ChevronRight, ChevronLeft, Bot, Zap, Eye, Terminal, Activity, Radio, Plus, Clock, Search, Lightbulb, AtSign, ArrowLeft, Trash2 } from 'lucide-react';
 import { cn } from '../lib/utils';
+
+// Mode definitions for Fellou-style orchestration
+const MODES = [
+    { key: 'AUTO', label: 'Auto', icon: 'activity', description: 'Auto-detect intent from input' },
+    { key: 'SEARCH', label: 'Search', icon: 'search', description: 'Web search only — no AI' },
+    { key: 'ACTION', label: 'Action', icon: 'zap', description: 'Execute browser actions — no AI' },
+    { key: 'THINK', label: 'Think', icon: 'lightbulb', description: 'AI reasoning only — no browsing' },
+    { key: 'REFINE', label: '', icon: 'at', description: 'Refine with context — AI + memory' },
+];
 
 export default function GeminiSidebar({ isOpen, onClose, messages, onSendMessage }) {
     const [inputValue, setInputValue] = useState('');
+    const [currentMode, setCurrentMode] = useState('AUTO');
     const [isCollapsed, setIsCollapsed] = useState(false);
+    const [showHistory, setShowHistory] = useState(false);
+    const [chatHistory, setChatHistory] = useState([]);
+    const [historyLoading, setHistoryLoading] = useState(false);
+
+    // Fetch AI chat history when history panel opens
+    useEffect(() => {
+        if (showHistory) {
+            fetchHistory();
+        }
+    }, [showHistory]);
+
+    const fetchHistory = async () => {
+        setHistoryLoading(true);
+        try {
+            const history = await window.ipc.invoke('ai:history:get');
+            setChatHistory(Array.isArray(history) ? history : []);
+        } catch (err) {
+            console.error('Failed to fetch AI history:', err);
+            setChatHistory([]);
+        } finally {
+            setHistoryLoading(false);
+        }
+    };
+
+    const handleDeleteHistoryItem = async (sessionId) => {
+        try {
+            await window.ipc.invoke('ai:history:delete', sessionId);
+            setChatHistory(prev => prev.filter(item => item.session_id !== sessionId));
+        } catch (err) {
+            console.error('Failed to delete AI history item:', err);
+        }
+    };
+
+    const handleSelectHistory = async (item) => {
+        try {
+            const session = await window.ipc.invoke('ai:history:getSession', item.session_id);
+            if (session && session.messages) {
+                // Restore the chat messages from this session
+                session.messages.forEach(msg => onSendMessage(msg.content, true));
+            }
+        } catch (err) {
+            console.error('Failed to load AI session:', err);
+        }
+        setShowHistory(false);
+    };
 
     const handleSubmit = (e) => {
         e.preventDefault();
         if (inputValue.trim()) {
-            onSendMessage(inputValue);
+            // Send message with the current mode for orchestration routing
+            onSendMessage(inputValue, currentMode);
             setInputValue('');
         }
     };
@@ -41,7 +97,14 @@ export default function GeminiSidebar({ isOpen, onClose, messages, onSendMessage
                             <button className="p-2 hover:bg-forest-100/50 rounded-lg text-forest-600 hover:text-forest-950 transition-colors">
                                 <Plus size={16} />
                             </button>
-                            <button className="p-2 hover:bg-forest-100/50 rounded-lg text-forest-600 hover:text-forest-950 transition-colors">
+                            <button 
+                                onClick={() => setShowHistory(!showHistory)}
+                                className={cn(
+                                    "p-2 hover:bg-forest-100/50 rounded-lg transition-colors",
+                                    showHistory ? "bg-forest-100/70 text-forest-950" : "text-forest-600 hover:text-forest-950"
+                                )}
+                                title="Chat History"
+                            >
                                 <Clock size={16} />
                             </button>
                             <button
@@ -64,6 +127,64 @@ export default function GeminiSidebar({ isOpen, onClose, messages, onSendMessage
 
             {!isCollapsed && (
                 <>
+                    {/* History Panel Overlay */}
+                    {showHistory ? (
+                        <div className="flex-1 flex flex-col overflow-hidden">
+                            <div className="flex items-center gap-3 px-5 py-4 border-b border-forest-200/30">
+                                <button 
+                                    onClick={() => setShowHistory(false)} 
+                                    className="p-1.5 hover:bg-forest-100/50 rounded-lg transition-colors text-forest-600"
+                                    title="Back"
+                                >
+                                    <ArrowLeft size={16} />
+                                </button>
+                                <h3 className="text-xs font-bold tracking-widest text-forest-950 uppercase">History</h3>
+                            </div>
+                            <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                {historyLoading ? (
+                                    <div className="flex items-center justify-center h-32">
+                                        <div className="w-5 h-5 border-2 border-forest-300 border-t-forest-600 rounded-full animate-spin" />
+                                    </div>
+                                ) : chatHistory.length === 0 ? (
+                                    <div className="p-6 text-center">
+                                        <Clock size={32} className="mx-auto text-forest-200 mb-3" />
+                                        <p className="text-[11px] font-medium text-forest-400 uppercase tracking-[0.3em]">No conversations yet</p>
+                                        <p className="text-[9px] text-forest-500 mt-1 tracking-wider">Your AI chat history will appear here</p>
+                                    </div>
+                                ) : (
+                                    <div className="py-2">
+                                        {chatHistory.map((item, idx) => (
+                                            <div
+                                                key={item.session_id || idx}
+                                                className="group flex items-center gap-3 px-5 py-3 hover:bg-forest-50/60 cursor-pointer transition-colors border-l-2 border-transparent hover:border-forest-500"
+                                                onClick={() => handleSelectHistory(item)}
+                                            >
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm text-forest-900 truncate">{item.title || 'Untitled Chat'}</p>
+                                                    {item.updated_at && (
+                                                        <p className="text-[9px] text-forest-400 mt-0.5">
+                                                            {new Date(item.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleDeleteHistoryItem(item.session_id);
+                                                    }}
+                                                    className="p-1 hover:bg-forest-100 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    title="Delete"
+                                                >
+                                                    <Trash2 size={12} className="text-forest-400 hover:text-red-500" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    ) : (
+                    <>
                     {/* Log Stream: Tactical Steps */}
                     <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
                         {messages.length === 0 ? (
@@ -96,7 +217,8 @@ export default function GeminiSidebar({ isOpen, onClose, messages, onSendMessage
                                             "p-5 text-sm leading-relaxed transition-all duration-500 border",
                                             msg.role === 'user'
                                                 ? "bg-forest-100 text-forest-900 rounded-[2rem] rounded-tr-none font-medium border-forest-200"
-                                                : "bg-white border-forest-100 text-forest-800 rounded-[2rem] rounded-tl-none"
+                                                : "bg-white border-forest-100 text-forest-800 rounded-[2rem] rounded-tl-none",
+                                            msg.streaming && "whitespace-pre-line"
                                         )}>
                                             {msg.content}
                                         </div>
@@ -137,25 +259,73 @@ export default function GeminiSidebar({ isOpen, onClose, messages, onSendMessage
                                     </button>
                                 </div>
                                 <div className="flex items-center gap-2 px-1">
-                                    <CommandChip icon={<Search size={14} />} label="Search" />
-                                    <CommandChip icon={<Zap size={14} />} label="Action" />
-                                    <CommandChip icon={<Lightbulb size={14} />} label="Think" />
-                                    <CommandChip icon={<AtSign size={14} />} label="" />
+                                    <CommandChip
+                                        icon={<Activity size={14} />}
+                                        label="Auto"
+                                        active={currentMode === 'AUTO'}
+                                        onClick={() => setCurrentMode('AUTO')}
+                                        title="Auto-detect intent from input"
+                                    />
+                                    <CommandChip
+                                        icon={<Search size={14} />}
+                                        label="Search"
+                                        active={currentMode === 'SEARCH'}
+                                        onClick={() => setCurrentMode('SEARCH')}
+                                        title="Web search only — no AI"
+                                    />
+                                    <CommandChip
+                                        icon={<Zap size={14} />}
+                                        label="Action"
+                                        active={currentMode === 'ACTION'}
+                                        onClick={() => setCurrentMode('ACTION')}
+                                        title="Execute browser actions — no AI"
+                                    />
+                                    <CommandChip
+                                        icon={<Lightbulb size={14} />}
+                                        label="Think"
+                                        active={currentMode === 'THINK'}
+                                        onClick={() => setCurrentMode('THINK')}
+                                        title="AI reasoning only — no browsing"
+                                    />
+                                    <CommandChip
+                                        icon={<AtSign size={14} />}
+                                        label=""
+                                        active={currentMode === 'REFINE'}
+                                        onClick={() => setCurrentMode('REFINE')}
+                                        title="Refine with context — AI + memory"
+                                    />
                                 </div>
                             </div>
                         </form>
                     </div>
+                </>
+                    )}
                 </>
             )}
         </div>
     );
 }
 
-function CommandChip({ icon, label }) {
+function CommandChip({ icon, label, active, onClick, title }) {
     return (
-        <button className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-white/50 border border-forest-100/60 rounded-xl transition-all duration-300 active:scale-95 group shadow-sm hover:bg-forest-50/60 hover:border-forest-200/60">
-            <span className="text-forest-400 group-hover:text-forest-600 transition-colors">{icon}</span>
-            {label && <span className="text-[9px] font-bold text-forest-400 group-hover:text-forest-600 uppercase tracking-[0.2em] transition-colors">{label}</span>}
+        <button
+            onClick={onClick}
+            title={title}
+            className={cn(
+                "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl transition-all duration-300 active:scale-95 group shadow-sm border",
+                active
+                    ? "bg-forest-600 border-forest-700 text-forest-50 shadow-md shadow-forest-200/40"
+                    : "bg-white/50 border-forest-100/60 hover:bg-forest-50/60 hover:border-forest-200/60"
+            )}
+        >
+            <span className={cn(
+                "transition-colors",
+                active ? "text-forest-100" : "text-forest-400 group-hover:text-forest-600"
+            )}>{icon}</span>
+            {label && <span className={cn(
+                "text-[9px] font-bold uppercase tracking-[0.2em] transition-colors",
+                active ? "text-forest-100" : "text-forest-400 group-hover:text-forest-600"
+            )}>{label}</span>}
         </button>
     );
 }

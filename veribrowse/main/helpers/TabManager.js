@@ -1,5 +1,6 @@
 import { WebContentsView, Menu, MenuItem, clipboard, BrowserWindow } from 'electron';
 import automationService from '../services/AutomationService';
+import historyService from '../services/HistoryService';
 import LayoutManager from './LayoutManager';
 
 export class TabManager {
@@ -48,6 +49,14 @@ export class TabManager {
         view.webContents.setWindowOpenHandler(({ url }) => {
             this.createTab(url);
             return { action: 'deny' };
+        });
+
+        // Record History
+        view.webContents.on('did-navigate', (event, navUrl) => {
+            historyService.addEntry({ url: navUrl, title: view.webContents.getTitle() });
+        });
+        view.webContents.on('page-title-updated', (event, title) => {
+            historyService.addEntry({ url: view.webContents.getURL(), title });
         });
 
         // Handle Context Menu (Right Click)

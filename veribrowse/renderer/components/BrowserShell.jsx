@@ -5,6 +5,7 @@ import UnifiedHeader from './UnifiedHeader';
 import CommandBar from './CommandBar';
 import ContentDisplay from './ContentDisplay';
 import GeminiSidebar from './GeminiSidebar';
+import HistoryPanel from './HistoryPanel';
 import { cn } from '../lib/utils';
 
 export default function BrowserShell() {
@@ -17,37 +18,20 @@ export default function BrowserShell() {
     const [loadingTabs, setLoadingTabs] = useState({});
     const [messages, setMessages] = useState([]);
     const [activeView, setActiveView] = useState('home');
+    const [chatSessionId] = useState(() => `session_${Date.now()}`);
 
-    const isTaskQuery = (text) => {
-        const query = (text || '').trim().toLowerCase();
-        if (!query) return false;
-
-        // Direct URLs or domains - always browse
-        if (/^https?:\/\//i.test(query)) return true;
-        if (/^[\w-]+\.(com|ai|io|org|net|dev)$/i.test(query)) return true;
-
-        // Browse/search keywords
-        const browseKeywords = [
-            'open',
-            'go to',
-            'visit',
-            'search for',
-            'find',
-            'look up',
-            'browse',
-            'navigate',
-            'show me',
-            'research',
-            'compare',
-            'how to',
-        ];
-        
-        for (const kw of browseKeywords) {
-            if (query.startsWith(kw) || query.includes(kw)) return true;
+    // Save AI chat session whenever messages change
+    useEffect(() => {
+        if (messages.length > 0) {
+            const firstUserMsg = messages.find(m => m.role === 'user');
+            const title = firstUserMsg ? firstUserMsg.content.slice(0, 60) : 'New Chat';
+            window.ipc.invoke('ai:history:save', {
+                sessionId: chatSessionId,
+                title,
+                messages: messages.filter(m => !m.streaming),
+            }).catch(err => console.error('Failed to save AI session:', err));
         }
-        
-        return false;
-    };
+    }, [messages, chatSessionId]);
 
     const mergeTabs = (currentTabs, incomingTabs) => {
         const byId = new Map(currentTabs.map(tab => [tab.id, tab]));
@@ -80,6 +64,36 @@ export default function BrowserShell() {
             }
         };
         initTab();
+    }, []);
+
+    // Fellou.ai-style: live tab-crawling progress from main process
+    useEffect(() => {
+        const onProgress = (e, payload) => {
+            if (!payload?.message) return;
+            setMessages(prev => {
+                const p = [...prev];
+                const last = p[p.length - 1];
+                if (last?.role === 'assistant' && last.streaming) {
+                    const log = [...(last.log || []), payload.message];
+                    p[p.length - 1] = { ...last, log, content: log.join('\n') };
+                    return p;
+                }
+                return p;
+            });
+            if (payload.phase === 'done' && payload.summary != null) {
+                setMessages(prev => {
+                    const p = [...prev];
+                    const last = p[p.length - 1];
+                    if (last?.streaming) {
+                        p[p.length - 1] = { ...last, streaming: false, content: last.content + '\nDone.' };
+                        return [...p, { role: 'assistant', content: payload.summary }];
+                    }
+                    return [...p, { role: 'assistant', content: payload.summary }];
+                });
+            }
+        };
+        window.ipc.on('agent:orchestrate-progress', onProgress);
+        return () => { try { window.ipc.off?.('agent:orchestrate-progress', onProgress); } catch (_) { } };
     }, []);
 
     // Trigger Command Bar on New Tab or shortcut
@@ -164,85 +178,98 @@ export default function BrowserShell() {
         await window.ipc.invoke('browser:closeTab', { tabId: id });
     };
 
-    const handleSendMessage = async (message) => {
+    const handleSendMessage = async (message, mode = 'AUTO') => {
         const trimmed = (message || '').trim();
         if (!trimmed) return;
 
         setMessages(prev => [...prev, { role: 'user', content: trimmed }]);
 
-        if (isTaskQuery(trimmed)) {
+        // For explicit browser modes, show streaming placeholder immediately.
+        // For AUTO mode, we show a generic "Processing…" since we don't know yet.
+        const isBrowserMode = mode === 'SEARCH' || mode === 'ACTION';
+        const isAutoMode = !mode || mode === 'AUTO';
+
+        if (isBrowserMode || isAutoMode) {
             setIsSidebarOpen(true);
-            setMessages(prev => [...prev, { role: 'assistant', content: 'Searching...' }]);
-
-            try {
-                const result = await window.ipc.invoke('automation:run', { prompt: trimmed });
-                if (result?.success && Array.isArray(result.tabs)) {
-                    setTabs(prev => mergeTabs(prev, result.tabs));
-                    if (result.activeTabId) {
-                        setActiveTab(result.activeTabId);
-                        await window.ipc.invoke('browser:switchTab', { tabId: result.activeTabId });
-                    }
-
-                    // Wait for page to load then summarize
-                    setMessages(prev => [...prev, { role: 'assistant', content: 'Reading page content...' }]);
-                    
-                    // Give the page time to load
-                    await new Promise(resolve => setTimeout(resolve, 3000));
-
-                    // Get page content and summarize
-                    try {
-                        const contentResult = await window.ipc.invoke('browser:getContent', { tabId: result.activeTabId });
-                        if (contentResult?.success && contentResult.content) {
-                            // Extract text and truncate for AI
-                            const textContent = contentResult.content
-                                .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-                                .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-                                .replace(/<[^>]+>/g, ' ')
-                                .replace(/\s+/g, ' ')
-                                .trim()
-                                .slice(0, 8000);
-
-                            if (textContent.length > 100) {
-                                setMessages(prev => [...prev, { role: 'assistant', content: 'Summarizing...' }]);
-                                
-                                const summaryPrompt = `Based on this search result content, answer the question: "${trimmed}"\n\nContent:\n${textContent}\n\nProvide a concise, helpful summary.`;
-                                const aiResult = await window.ipc.invoke('ai:answer', { prompt: summaryPrompt });
-                                
-                                if (aiResult?.success && aiResult.answer) {
-                                    setMessages(prev => [...prev, { role: 'assistant', content: aiResult.answer }]);
-                                } else {
-                                    setMessages(prev => [...prev, { role: 'assistant', content: aiResult?.error || 'Could not summarize. Check the page directly.' }]);
-                                }
-                            } else {
-                                setMessages(prev => [...prev, { role: 'assistant', content: 'Page is still loading. Ask me to summarize when ready.' }]);
-                            }
-                        } else {
-                            setMessages(prev => [...prev, { role: 'assistant', content: 'Page loaded. Ask me to summarize or drill deeper.' }]);
-                        }
-                    } catch (contentError) {
-                        console.error('Content extraction failed:', contentError);
-                        setMessages(prev => [...prev, { role: 'assistant', content: 'Page loaded. Ask me anything about it.' }]);
-                    }
-                } else {
-                    setMessages(prev => [...prev, { role: 'assistant', content: result?.error || 'Task could not be started.' }]);
-                }
-            } catch (error) {
-                console.error('Automation failed:', error);
-                setMessages(prev => [...prev, { role: 'assistant', content: 'Task failed to start. Try again or refine the request.' }]);
-            }
-            return;
+            setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: isAutoMode ? 'Processing…' : (mode === 'SEARCH' ? 'Searching…' : 'Executing action…'),
+                streaming: true,
+                log: [isAutoMode ? 'Processing…' : (mode === 'SEARCH' ? 'Searching…' : 'Executing action…')],
+            }]);
         }
 
         try {
-            const result = await window.ipc.invoke('ai:answer', { prompt: trimmed });
-            if (result?.success) {
-                setMessages(prev => [...prev, { role: 'assistant', content: result.answer }]);
-            } else {
-                setMessages(prev => [...prev, { role: 'assistant', content: result?.error || 'AI response unavailable.' }]);
+            const result = await window.ipc.invoke('agent:command', {
+                mode: mode || 'AUTO',
+                input: trimmed,
+                sessionId: chatSessionId,
+            });
+
+            if (result.type === 'AI_RESPONSE') {
+                // THINK / REFINE → show AI answer
+                // If we had a streaming placeholder, replace it; otherwise append
+                setMessages(prev => {
+                    const p = [...prev];
+                    const last = p[p.length - 1];
+                    if (last?.streaming) {
+                        p[p.length - 1] = { ...last, streaming: false, content: result.message };
+                        return p;
+                    }
+                    return [...p, { role: 'assistant', content: result.message }];
+                });
+            } else if (result.type === 'STATUS') {
+                // SEARCH / ACTION → short status, update tabs
+                setMessages(prev => {
+                    const p = [...prev];
+                    const last = p[p.length - 1];
+                    if (last?.streaming) {
+                        p[p.length - 1] = { ...last, streaming: false, content: result.message };
+                    } else {
+                        p.push({ role: 'assistant', content: result.message });
+                    }
+                    return p;
+                });
+
+                // Sync tab state from result
+                if (result.tabId) {
+                    setTabs(prev => {
+                        const exists = prev.find(t => t.id === result.tabId);
+                        if (exists) {
+                            return prev.map(t => t.id === result.tabId
+                                ? { ...t, url: result.url || t.url, title: result.title || t.title }
+                                : t
+                            );
+                        }
+                        return [...prev, { id: result.tabId, title: result.title || trimmed, url: result.url || '' }];
+                    });
+                    setActiveTab(result.tabId);
+                    await window.ipc.invoke('browser:switchTab', { tabId: result.tabId });
+                }
+            } else if (result.type === 'ERROR') {
+                setMessages(prev => {
+                    const p = [...prev];
+                    const last = p[p.length - 1];
+                    if (last?.streaming) {
+                        p[p.length - 1] = { ...last, streaming: false, content: `Error: ${result.message}` };
+                    } else {
+                        p.push({ role: 'assistant', content: `Error: ${result.message}` });
+                    }
+                    return p;
+                });
             }
         } catch (error) {
-            console.error('AI answer failed:', error);
-            setMessages(prev => [...prev, { role: 'assistant', content: 'AI request failed. Try again.' }]);
+            console.error('agent:command failed:', error);
+            setMessages(prev => {
+                const p = [...prev];
+                const last = p[p.length - 1];
+                if (last?.streaming) {
+                    p[p.length - 1] = { ...last, streaming: false, content: 'Command failed. Try again.' };
+                } else {
+                    p.push({ role: 'assistant', content: 'Command failed. Try again.' });
+                }
+                return p;
+            });
         }
     };
 
@@ -256,9 +283,9 @@ export default function BrowserShell() {
             <CommandBar
                 isOpen={isCommandBarOpen}
                 onClose={() => setIsCommandBarOpen(false)}
-                onSearch={handleSearch}
-                onAction={(q) => console.log('Action:', q)}
-                onThink={(q) => console.log('Think:', q)}
+                onSearch={(q) => { handleSendMessage(q, 'AUTO'); setIsCommandBarOpen(false); }}
+                onAction={(q) => { handleSendMessage(q, 'ACTION'); setIsCommandBarOpen(false); }}
+                onThink={(q) => { handleSendMessage(q, 'THINK'); setIsCommandBarOpen(false); }}
                 tabs={tabs}
             />
 
@@ -266,6 +293,16 @@ export default function BrowserShell() {
             <SideRail
                 activeView={activeView}
                 onViewChange={setActiveView}
+            />
+
+            {/* History Panel */}
+            <HistoryPanel
+                isOpen={activeView === 'history'}
+                onClose={() => setActiveView('home')}
+                onNavigate={(url) => {
+                    setActiveView('home');
+                    handleSearch(url);
+                }}
             />
 
             {/* Main Layout Area */}
