@@ -10,6 +10,7 @@ export const useChatStore = create((set) => ({
         }
     ],
     isLoading: false,
+    currentTools: [], // List of tools the agent is currently using
     responseCache: {}, // Rule 9: Cache responses to avoid repeated calls
 
     // Adds a message (user or AI) to the state
@@ -30,7 +31,13 @@ export const useChatStore = create((set) => ({
     })),
 
     // Sets the loading state
-    setLoading: (isLoading) => set({ isLoading }),
+    setLoading: (isLoading) => set((state) => ({
+        isLoading,
+        currentTools: isLoading ? state.currentTools : [] // Reset tools when done
+    })),
+
+    // Sets the current tools being used
+    setCurrentTools: (tools) => set({ currentTools: tools || [] }),
 
     // Clears chat history
     clearMessages: () => set({
@@ -40,6 +47,7 @@ export const useChatStore = create((set) => ({
             content: "Chat history cleared. How can I help you?",
             timestamp: Date.now()
         }],
+        currentTools: [],
         responseCache: {} // Clear cache on reset
     })
 }));

@@ -8,8 +8,8 @@ export const Splash = ({ onComplete }) => {
   useEffect(() => {
     const timer = setTimeout(() => {
       setIsVisible(false);
-      setTimeout(onComplete, 1000); // Wait for exit animation
-    }, 3000);
+      setTimeout(onComplete, 800); // Wait for exit animation
+    }, 1500);
     return () => clearTimeout(timer);
   }, [onComplete]);
 

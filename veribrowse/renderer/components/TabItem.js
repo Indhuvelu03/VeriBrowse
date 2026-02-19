@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import { useTabStore } from '../store/tabStore';
-import { X, Globe } from 'lucide-react';
+import { X, Globe, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -18,13 +18,10 @@ const TabItem = ({ tab }) => {
       layoutId={`tab-${tab.id}`}
       onClick={() => setActiveTab(tab.id)}
       className={clsx(
-        "group relative flex items-center h-[34px] rounded-lg cursor-pointer transition-all border select-none",
-        // Flex behavior:
-        // - Active: flex-[3] and larger min-width to ensure title visibility
-        // - Inactive: flex-[1] and small min-width (36px) to allow collapsing to just icon
+        "group relative flex items-center h-[34px] rounded-lg cursor-pointer transition-all duration-500 border select-none",
         isActive
-          ? "flex-[3] min-w-[140px] max-w-[240px] bg-white/[0.08] text-white border-white/10 shadow-sm z-10 px-3"
-          : "flex-[1] min-w-[36px] max-w-[160px] text-gray-500 hover:text-gray-300 hover:bg-white/[0.03] border-transparent px-2 justify-center"
+          ? "flex-[6] min-w-[180px] max-w-[320px] bg-white/[0.08] text-white border-white/10 shadow-lg z-10 px-3"
+          : "flex-[1] min-w-[32px] max-w-[140px] text-gray-500 hover:text-gray-350 hover:bg-white/[0.04] border-transparent px-2 justify-center"
       )}
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
@@ -33,9 +30,9 @@ const TabItem = ({ tab }) => {
     >
       <div className={clsx(
         "flex-shrink-0 transition-colors",
-        isActive ? "text-blue-400 mr-2" : "text-gray-600"
+        isActive ? (tab.isAgent ? "text-purple-400 mr-2" : "text-blue-400 mr-2") : "text-gray-600"
       )}>
-        <Globe size={14} />
+        {tab.isAgent ? <Sparkles size={14} /> : <Globe size={14} />}
       </div>
 
       {/* Title - Only visible/taking space if active or if there's enough room (handled by flex truncation) 

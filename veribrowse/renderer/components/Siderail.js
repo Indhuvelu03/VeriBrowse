@@ -5,7 +5,7 @@ import { useUIStore } from '../store/uiStore';
 import { motion } from 'framer-motion';
 
 const Siderail = () => {
-  const { setShowHome } = useUIStore();
+  const { openHome } = useUIStore();
 
   return (
     <div
@@ -13,12 +13,12 @@ const Siderail = () => {
     >
       <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent pointer-events-none" />
 
-      <div className="mb-12 flex flex-col items-center relative z-10 transition-transform hover:scale-110 duration-500 cursor-pointer" onClick={() => setShowHome(true)}>
+      <div className="mb-12 flex flex-col items-center relative z-10 transition-transform hover:scale-110 duration-500 cursor-pointer" onClick={openHome}>
         <Logo size={42} float />
       </div>
 
       <nav className="flex-1 w-full flex flex-col items-center space-y-6 relative z-10">
-        <MenuButton icon={Home} label="Home" onClick={() => setShowHome(true)} active />
+        <MenuButton icon={Home} label="Home" onClick={openHome} active />
         <MenuButton icon={Compass} label="Browse" />
         <MenuButton icon={History} label="History" />
         <div className="w-8 h-[1px] bg-white/5 mx-auto my-2" />

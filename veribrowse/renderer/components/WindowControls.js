@@ -2,24 +2,12 @@ import React from 'react';
 import { Minus, Square, X } from 'lucide-react';
 import clsx from 'clsx';
 
+import { windowControls } from '../lib/ipc';
+
 const WindowControls = () => {
-  const handleMinimize = () => {
-    if (typeof window !== 'undefined' && window.ipc) {
-      window.ipc.send('window-minimize');
-    }
-  };
-
-  const handleMaximize = () => {
-    if (typeof window !== 'undefined' && window.ipc) {
-      window.ipc.send('window-maximize');
-    }
-  };
-
-  const handleClose = () => {
-    if (typeof window !== 'undefined' && window.ipc) {
-      window.ipc.send('window-close');
-    }
-  };
+  const handleMinimize = () => windowControls.minimize();
+  const handleMaximize = () => windowControls.maximize();
+  const handleClose = () => windowControls.close();
 
   return (
     <div className="flex items-center space-x-2 pl-4 border-l border-glass-border ml-2 no-drag cursor-pointer">

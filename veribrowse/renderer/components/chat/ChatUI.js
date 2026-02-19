@@ -2,13 +2,13 @@ import React, { useRef, useEffect } from 'react';
 import { useChatStore } from '../../store/chatStore';
 
 const ChatUI = () => {
-    const { messages, isLoading } = useChatStore();
+    const { messages, isLoading, currentTools } = useChatStore();
     const messagesEndRef = useRef(null);
 
     // Auto-scroll to bottom
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages, isLoading]);
+    }, [messages, isLoading, currentTools]);
 
     return (
         <div className="flex-1 p-6 overflow-y-auto space-y-6 scrollbar-hide">
@@ -23,6 +23,18 @@ const ChatUI = () => {
             `}
                     >
                         <p className="whitespace-pre-wrap">{msg.content}</p>
+
+                        {/* If the message involved tool results, show a summary */}
+                        {msg.toolResults && (
+                            <div className="mt-3 pt-3 border-t border-white/5 space-y-2">
+                                {msg.toolResults.map((tr, i) => (
+                                    <div key={i} className="flex items-center gap-2 text-[10px] text-white/40 italic">
+                                        <div className="w-1 h-1 bg-green-500 rounded-full" />
+                                        <span>Action: {tr.tool} executed successfully</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                     <span className={`text-[10px] text-gray-600 ${msg.role === 'user' ? 'mr-1' : 'ml-1'} font-bold tracking-widest uppercase`}>
                         {msg.role === 'assistant' ? (index === 0 ? 'System Initialized' : 'Aeon') : 'User Query'}
@@ -33,13 +45,22 @@ const ChatUI = () => {
             {isLoading && (
                 <div className="space-y-1 flex flex-col items-start">
                     <div className="p-4 rounded-2xl rounded-tl-none bg-white/[0.03] border border-white/10 shadow-xl max-w-[80%]">
-                        <div className="flex space-x-1 items-center h-4">
-                            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-                            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-                            <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce"></span>
+                        <div className="flex items-center gap-3">
+                            <div className="flex space-x-1 items-center h-4">
+                                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                                <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce"></span>
+                            </div>
+                            {currentTools && currentTools.length > 0 && (
+                                <span className="text-[10px] text-blue-400 font-medium animate-pulse">
+                                    Executing: {currentTools.join(', ')}
+                                </span>
+                            )}
                         </div>
                     </div>
-                    <span className="text-[10px] text-gray-600 ml-1 font-bold tracking-widest uppercase">Thinking...</span>
+                    <span className="text-[10px] text-gray-600 ml-1 font-bold tracking-widest uppercase">
+                        {currentTools && currentTools.length > 0 ? 'Agent in Action' : 'Thinking...'}
+                    </span>
                 </div>
             )}
 

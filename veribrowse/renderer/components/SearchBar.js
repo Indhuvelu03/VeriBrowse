@@ -5,10 +5,14 @@ import { useUIStore } from '../store/uiStore';
 import { buildSearchUrl } from '../utils/searchUtils';
 import clsx from 'clsx';
 import { motion } from 'framer-motion';
+import { resolveCommand } from '../lib/CommandResolver';
+import { useChatStore } from '../store/chatStore';
+import ipc from '../lib/ipc';
 
 const SearchBar = ({ variant = 'default' }) => {
   const { activeTabId, updateTab, tabs, addTab, triggerNavigation } = useTabStore();
-  const { setShowHome } = useUIStore();
+  const { setMainView, openChat } = useUIStore();
+  const { addMessage, setLoading } = useChatStore();
 
   const activeTab = tabs.find(t => t.id === activeTabId);
   const [input, setInput] = useState('');
@@ -24,14 +28,38 @@ const SearchBar = ({ variant = 'default' }) => {
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter') {
-      const finalUrl = buildSearchUrl(input);
+      const command = resolveCommand(input);
 
-      if (activeTabId) {
-        updateTab(activeTabId, { url: finalUrl, title: input });
+      if (command.intent === 'agent') {
+        // 1. Sync the UI with the Chat Panel
+        addMessage({ role: 'user', content: input });
+        setLoading(true);
+        openChat();
+
+        // 2. Trigger the actual mission
+        ipc.agent.chat(command.value).then(result => {
+          setLoading(false);
+          if (result.success) {
+            addMessage({
+              role: 'assistant',
+              content: result.response,
+              type: result.type,
+              toolResults: result.actions
+            });
+          }
+        }).catch(() => setLoading(false));
+
+        setInput('');
       } else {
-        addTab({ id: Date.now().toString(), url: finalUrl, title: input });
+        // Standard navigation
+        if (activeTabId) {
+          updateTab(activeTabId, { url: command.value, title: input });
+        } else {
+          addTab({ id: Date.now().toString(), url: command.value, title: input });
+        }
+        setMainView('browser');
       }
-      setShowHome(false);
+
       e.target.blur();
     }
   };

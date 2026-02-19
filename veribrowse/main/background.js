@@ -1,230 +1,260 @@
-import { app, BrowserWindow, ipcMain, BrowserView } from 'electron';
-import serve from 'electron-serve';
+import { app, BrowserWindow, ipcMain, session, BrowserView } from 'electron';
+
+// Height of the renderer topbar/titlebar — BrowserView sits below this
+const TOPBAR_HEIGHT = 60;
 import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import serve from 'electron-serve';
 
-const isProd = process.env.NODE_ENV === 'production';
+// Services
+import BrowserService from './services/BrowserService.js';
+import DatabaseService from './services/DatabaseService.js';
 
-// Explicitly load .env.local for development
-// Electron/Node doesn't automatically load .env.local
+// Handlers
+import { registerAgentHandlers } from './ipc/AgentHandlers.js';
+import { registerBrowserHandlers } from './ipc/browserHandlers.js';
+import { registerHistoryHandlers } from './ipc/historyHandlers.js';
+import { registerDownloadHandlers } from './ipc/downloadHandlers.js';
+import { registerWindowHandlers } from './ipc/windowHandlers.js';
+
+// Environment Setup
+const isDev = process.env.NODE_ENV === 'development';
 const envLocalPath = path.join(process.cwd(), '.env.local');
 if (fs.existsSync(envLocalPath)) {
   dotenv.config({ path: envLocalPath });
-  console.log("Loaded .env.local from:", envLocalPath);
+  console.log('[Main] Loaded .env.local');
 } else {
-  // If not found, try loading standard .env
   dotenv.config();
 }
 
-let mainWindow;
-let browserView;
+// Global references
+let mainWindow = null;
+let browserView = null;
+let browserService = null;
+let databaseService = null;
 
-// Initialize Gemini API in Main Process
-const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+// Serve production build
+const loadURL = serve({ directory: 'app' }); // Nextron default
 
-// Debug log to confirm key loading (will show in terminal)
-if (GEMINI_API_KEY) {
-  console.log("Gemini API Key loaded successfully (starts with):", GEMINI_API_KEY.substring(0, 8) + "...");
-} else {
-  console.error("Gemini API Key NOT found in process.env");
-}
-
-const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
-
-if (isProd) {
-  serve({ directory: 'app' });
-}
-
+/**
+ * Create main browser window
+ */
 function createWindow() {
+  console.log('[Main] Creating main window...');
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
-    backgroundColor: '#050505',
-    titleBarStyle: 'hidden',
+    minWidth: 1200,
+    minHeight: 700,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#0a0a0a',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+      webSecurity: true,
     },
+    show: false
   });
 
-  // Initialize BrowserView
+  // Initialize BrowserView for the native browser area
   browserView = new BrowserView({
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      plugins: true,
+      // Attempt to hide "AutomationControlled" from the renderer chrome
+      enableRemoteModule: false,
     }
   });
 
-  mainWindow.setBrowserView(browserView);
-  // Initial bounds 0, will be resized by renderer
-  browserView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-  browserView.webContents.loadURL('about:blank');
+  // Apply "stealth" user agent and remove automation hints
+  const viewSession = browserView.webContents.session;
+  viewSession.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');
 
-  // Track BrowserView status and send to renderer
-  const sendStatusUpdate = () => {
-    if (mainWindow && browserView) {
-      mainWindow.webContents.send('view-status-updated', {
-        url: browserView.webContents.getURL(),
-        title: browserView.webContents.getTitle(),
-        canGoBack: browserView.webContents.canGoBack(),
-        canGoForward: browserView.webContents.canGoForward(),
-      });
-    }
-  };
-
-  browserView.webContents.on('did-navigate', sendStatusUpdate);
-  browserView.webContents.on('did-navigate-in-page', sendStatusUpdate);
-  browserView.webContents.on('page-title-updated', sendStatusUpdate);
-  browserView.webContents.on('did-finish-load', sendStatusUpdate);
-
-  const url = isProd ? 'app://./index.html' : 'http://localhost:8888/';
-  mainWindow.loadURL(url); // Ensure this is not overwritten if serve is used
-
-  // Handle window controls
-  ipcMain.on('window-minimize', () => {
-    mainWindow.minimize();
+  // Fellou-style Navigation Guard
+  // 1. Intercept new window requests (target="_blank") and redirect to same view
+  browserView.webContents.setWindowOpenHandler(({ url }) => {
+    console.log('[Main] Blocking popup/newtab and redirecting to same view:', url);
+    browserView.webContents.loadURL(url);
+    return { action: 'deny' };
   });
 
-  ipcMain.on('window-maximize', () => {
-    if (mainWindow.isMaximized()) {
-      mainWindow.unmaximize();
-    } else {
-      mainWindow.maximize();
-    }
-  });
-
-  ipcMain.on('window-close', () => {
-    mainWindow.close();
-  });
-
-  // ---------------------------------------------
-  // BrowserView IPC Handlers
-  // ---------------------------------------------
-
-  ipcMain.on('view-resize', (event, bounds) => {
-    if (browserView && mainWindow) {
-      const newBounds = {
-        x: Math.round(bounds.x),
-        y: Math.round(bounds.y),
-        width: Math.round(bounds.width),
-        height: Math.round(bounds.height),
+  // 2. Override window.open inside the page and hide ads/popups
+  browserView.webContents.on('dom-ready', () => {
+    browserView.webContents.executeJavaScript(`
+      // Convert popups into same-page navigations
+      window.open = (url) => {
+        window.location.href = url;
+        return window;
       };
-      browserView.setBounds(newBounds);
-    }
-  });
+      
+      // Stealth: Remove webdriver flag
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 
-  ipcMain.on('view-load-url', (event, url) => {
-    if (browserView) {
-      browserView.webContents.loadURL(url).catch(e => {
-        console.error('Failed to load URL:', url, e);
-      });
-    }
-  });
-
-  ipcMain.on('view-reload', () => {
-    if (browserView) browserView.webContents.reload();
-  });
-
-  ipcMain.on('view-back', () => {
-    if (browserView && browserView.webContents.canGoBack()) {
-      browserView.webContents.goBack();
-    }
-  });
-
-  ipcMain.on('view-forward', () => {
-    if (browserView && browserView.webContents.canGoForward()) {
-      browserView.webContents.goForward();
-    }
-  });
-
-  ipcMain.on('view-hide', () => {
-    if (browserView) {
-      browserView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-    }
-  });
-
-  ipcMain.handle('view-get-selection', async () => {
-    if (browserView) {
-      try {
-        return await browserView.webContents.executeJavaScript('window.getSelection().toString()');
-      } catch (e) {
-        console.error('Failed to get selection:', e);
-        return '';
-      }
-    }
-    return '';
-  });
-
-  // ---------------------------------------------
-  // Gemini AI IPC Handler (Main Process) - COST OPTIMIZED (gemini-2.0-flash ONLY)
-  // ---------------------------------------------
-  ipcMain.handle('gemini-generate', async (event, prompt) => {
-    const API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-
-    if (!API_KEY) {
-      throw new Error("API key missing. Please check .env.local and restart app.");
-    }
-
-    // 1. LIMIT INPUT (Rule 6: Limit to maximum 3000 characters)
-    const sanitizedPrompt = prompt.substring(0, 3000);
-
-    // 2. ONLY gemini-2.0-flash (Rule 1 & 2)
-    const model = "gemini-2.0-flash";
-
-    try {
-      // 3. LOGGING (Rule 10)
-      console.log(`[Main AI Call] Target Model: ${model}. Payload Size: ${sanitizedPrompt.length} chars.`);
-
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: sanitizedPrompt }] }],
-            // 4. DISABLE STREAMING by default (Rule 8)
-          }),
+      // Action Guard: Block ad overlays that steal agent clicks
+      const style = document.createElement('style');
+      style.textContent = \`
+        .ad, .social-share, #popup-container, .modal-backdrop { 
+          pointer-events: none !important; 
+          visibility: hidden !important; 
+          display: none !important; 
         }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        const errMsg = data.error?.message || `HTTP ${response.status}`;
-        console.error(`[Main AI Error] ${model} failed:`, errMsg);
-        throw new Error(errMsg);
-      }
-
-      const content = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (content) {
-        console.log(`[Main AI Success] Response received from ${model}`);
-        return content;
-      }
-
-      throw new Error("Empty response from Gemini API");
-
-    } catch (err) {
-      console.error(`[Main AI] System Error:`, err.message);
-      throw err;
-    }
+      \`;
+      document.head.appendChild(style);
+    `).catch(() => { });
   });
+
+  // Attach BrowserView to window
+  mainWindow.setBrowserView(browserView);
+
+  // Let Electron auto-resize the BrowserView width/height when window resizes
+  browserView.setAutoResize({ width: true, height: true });
+
+  /**
+   * Calculates and applies correct BrowserView bounds.
+   * BrowserView sits below the TOPBAR_HEIGHT px renderer chrome.
+   */
+  function applyBrowserViewBounds() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const { width, height } = mainWindow.getContentBounds();
+    const bounds = {
+      x: 0,
+      y: TOPBAR_HEIGHT,
+      width: Math.max(width, 0),
+      height: Math.max(height - TOPBAR_HEIGHT, 0),
+    };
+    console.log('[Main] BrowserView bounds →', bounds);
+    browserView.setBounds(bounds);
+  }
+
+  // Load URL
+  if (isDev) {
+    mainWindow.loadURL('http://localhost:8888');
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  } else {
+    mainWindow.loadURL('app://-');
+  }
+
+  mainWindow.once('ready-to-show', () => {
+    console.log('[Main] Window ready to show');
+    mainWindow.show();
+    // Apply bounds as soon as the window is visible
+    applyBrowserViewBounds();
+  });
+
+  // Re-apply on every window resize (catches maximize/restore/drag)
+  mainWindow.on('resize', applyBrowserViewBounds);
+  mainWindow.on('maximize', applyBrowserViewBounds);
+  mainWindow.on('unmaximize', applyBrowserViewBounds);
+  mainWindow.on('restore', applyBrowserViewBounds);
+
+  mainWindow.on('closed', () => {
+    console.log('[Main] Window closed');
+    mainWindow = null;
+  });
+
+  return mainWindow;
 }
 
-app.whenReady().then(() => {
+/**
+ * Initialize all services
+ */
+async function initializeServices() {
+  console.log('[Main] Initializing services...');
+
+  try {
+    databaseService = new DatabaseService();
+
+    // Initialize hybrid browser service
+    browserService = new BrowserService(mainWindow, browserView);
+
+    return true;
+  } catch (error) {
+    console.error('[Main] Service initialization error:', error);
+    return false;
+  }
+}
+
+/**
+ * Register all IPC handlers
+ */
+function registerAllHandlers() {
+  console.log('[Main] Registering IPC handlers...');
+
+  // Agent handlers (AI thinking, tool orchestration)
+  registerAgentHandlers(mainWindow, browserView);
+
+  // Browser handlers (navigation, tabs, resizing)
+  registerBrowserHandlers(browserService, mainWindow);
+
+  // History handlers (database storage)
+  registerHistoryHandlers(databaseService);
+
+  // Download handlers
+  registerDownloadHandlers();
+
+  // Window handlers (minimize/maximize/close)
+  registerWindowHandlers(mainWindow);
+}
+
+/**
+ * Configure session security and defaults
+ */
+function configureSession() {
+  session.defaultSession.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  );
+  console.log('[Main] Session configured');
+}
+
+/**
+ * App ready handler
+ */
+app.whenReady().then(async () => {
+  console.log('[Main] App ready');
+
+  configureSession();
   createWindow();
 
+  const servicesReady = await initializeServices();
+  if (servicesReady) {
+    registerAllHandlers();
+  }
+
+  console.log('[Main] Application fully initialized');
+
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
   });
 });
 
+/**
+ * Cleanup on exit
+ */
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
+
+app.on('before-quit', async (event) => {
+  console.log('[Main] Cleaning up before quit...');
+
+  // Note: Playwright cleanup is sync or async. 
+  // We'll try to shut down gracefully.
+  if (browserService) {
+    await browserService.close();
+  }
+
+  if (databaseService) {
+    databaseService.close();
+  }
+});
+
+console.log('[Main] Background logic loaded.');

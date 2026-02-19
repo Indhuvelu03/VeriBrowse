@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useTabStore } from '../store/tabStore';
 import { Logo } from './Logo';
+import { browser } from '../lib/ipc';
+import { useUIStore } from '../store/uiStore';
 
 const BrowserView = () => {
   const { activeTabId, tabs } = useTabStore();
+  const chatOpen = useUIStore((state) => state.chatOpen);
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const containerRef = useRef(null);
 
@@ -11,11 +14,8 @@ const BrowserView = () => {
   // We use a ResizeObserver to detect changes in this container's size/position
   useLayoutEffect(() => {
     const updateBounds = () => {
-      if (containerRef.current && window.ipc) {
+      if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
-        // Send bounds to main process
-        // Note: rect.x/y are relative to viewport. Electron setBounds expects relative to window client area.
-        // Since we are full screen app usually, clientX/Y match window coords mostly.
         const bounds = {
           x: rect.x,
           y: rect.y,
@@ -23,11 +23,10 @@ const BrowserView = () => {
           height: rect.height,
         };
 
-        // If dimensions are small (hidden/collapsed), ask to hide/resize to 0
         if (rect.width === 0 || rect.height === 0 || !activeTab) {
-          window.ipc.send('view-hide');
+          browser.hide();
         } else {
-          window.ipc.send('view-resize', bounds);
+          browser.resize(bounds);
         }
       }
     };
@@ -45,7 +44,7 @@ const BrowserView = () => {
       observer.disconnect();
       window.removeEventListener('resize', updateBounds);
     };
-  }, [activeTab]); // Re-run if active tab changes to ensure we show/hide correctly
+  }, [activeTab, chatOpen]); // Re-run if active tab or chat panel changes
 
   // Navigation is handled via store actions (updateTab, addTab)
   // which send IPC view-load-url. We don't need a useEffect here that
@@ -53,32 +52,41 @@ const BrowserView = () => {
 
   // Handle Navigation Actions via IPC
   useEffect(() => {
-    if (activeTab?.navigationAction && window.ipc) {
+    if (activeTab?.navigationAction) {
       const { type } = activeTab.navigationAction;
-      if (type === 'back') window.ipc.send('view-back');
-      if (type === 'forward') window.ipc.send('view-forward');
-      if (type === 'reload') window.ipc.send('view-reload');
+      if (type === 'back') browser.goBack();
+      if (type === 'forward') browser.goForward();
+      if (type === 'reload') browser.refresh();
     }
   }, [activeTab?.navigationAction]);
 
   // Listen for BrowserView status updates from Main process
   useEffect(() => {
-    if (window.ipc) {
-      const unsubscribe = window.ipc.on('view-status-updated', (status) => {
-        if (activeTabId) {
-          // Use syncTab to update state WITHOUT re-triggering IPC navigation
-          useTabStore.getState().syncTab(activeTabId, {
-            url: status.url,
-            title: status.title,
-            canGoBack: status.canGoBack,
-            canGoForward: status.canGoForward,
-          });
-        }
+    const unsubscribeStatus = browser.onStatusUpdate((status) => {
+      if (activeTabId) {
+        useTabStore.getState().syncTab(activeTabId, {
+          url: status.url,
+          title: status.title,
+          canGoBack: status.canGoBack,
+          canGoForward: status.canGoForward,
+        });
+      }
+    });
+
+    // Handle remote tab creation (e.g. from Agent)
+    const unsubscribeAdd = browser.onAddTab((tab) => {
+      console.log('[Renderer] Remote add-tab received:', tab);
+      useTabStore.getState().addTab({
+        ...tab,
+        id: tab.id || `tab-${Date.now()}`,
+        isAgent: true
       });
-      return () => {
-        if (typeof unsubscribe === 'function') unsubscribe();
-      };
-    }
+    });
+
+    return () => {
+      if (typeof unsubscribeStatus === 'function') unsubscribeStatus();
+      if (typeof unsubscribeAdd === 'function') unsubscribeAdd();
+    };
   }, [activeTabId]);
 
   const hasValidUrl = activeTab && activeTab.url && activeTab.url !== 'about:blank';

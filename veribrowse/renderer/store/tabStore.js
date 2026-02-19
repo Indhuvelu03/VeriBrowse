@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { browser } from '../lib/ipc';
 
 export const useTabStore = create((set, get) => ({
   tabs: [],
@@ -22,8 +23,8 @@ export const useTabStore = create((set, get) => ({
 
   addTab: (tab) =>
     set((state) => {
-      if (typeof window !== 'undefined' && window.ipc && tab.url && tab.url !== 'about:blank') {
-        window.ipc.send('view-load-url', tab.url);
+      if (tab.url && tab.url !== 'about:blank') {
+        browser.navigate(tab.url);
       }
       const newTabs = [...state.tabs, tab];
       return { tabs: newTabs, activeTabId: tab.id };
@@ -38,14 +39,16 @@ export const useTabStore = create((set, get) => ({
         if (newTabs.length > 0) {
           newActiveId = newTabs[newTabs.length - 1].id;
           const nextTab = newTabs[newTabs.length - 1];
-          if (nextTab.url && nextTab.url !== 'about:blank' && typeof window !== 'undefined' && window.ipc) {
-            window.ipc.send('view-load-url', nextTab.url);
+          if (nextTab.url && nextTab.url !== 'about:blank') {
+            browser.navigate(nextTab.url);
+          } else {
+            browser.hide();
           }
         } else {
           newActiveId = null;
-          if (typeof window !== 'undefined' && window.ipc) {
-            window.ipc.send('view-hide');
-          }
+          browser.hide();
+          browser.navigate('about:blank'); // Purge content
+          useUIStore.getState().openHome(); // Reset layout
         }
       }
 
@@ -55,8 +58,8 @@ export const useTabStore = create((set, get) => ({
   setActiveTab: (id) => {
     set((state) => {
       const tab = state.tabs.find((t) => t.id === id);
-      if (tab && tab.url && tab.url !== 'about:blank' && typeof window !== 'undefined' && window.ipc) {
-        window.ipc.send('view-load-url', tab.url);
+      if (tab && tab.url && tab.url !== 'about:blank') {
+        browser.navigate(tab.url);
       }
       return { activeTabId: id };
     });
@@ -69,8 +72,8 @@ export const useTabStore = create((set, get) => ({
 
   updateTab: (id, updates) =>
     set((state) => {
-      if (updates.url && typeof window !== 'undefined' && window.ipc) {
-        window.ipc.send('view-load-url', updates.url);
+      if (updates.url) {
+        browser.navigate(updates.url);
       }
       return {
         tabs: state.tabs.map((t) => (t.id === id ? { ...t, ...updates } : t)),
