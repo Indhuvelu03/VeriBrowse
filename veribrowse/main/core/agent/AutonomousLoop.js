@@ -41,10 +41,10 @@ import compactor from '../ContextCompactor.js';
 import UIFeedback from '../UIFeedback.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────
-const MAX_PLAN_STEPS = 30;   // max steps in a plan
+const MAX_PLAN_STEPS = 12;   // max steps in a plan
 const MAX_STEP_RETRIES = 3;    // retries per step before replan
 const MAX_REPLAN_ATTEMPTS = 2;    // max times we ask the LLM to replan
-const MAX_TOTAL_ACTIONS = 50;   // absolute safety ceiling
+const MAX_TOTAL_ACTIONS = 20;   // absolute safety ceiling
 
 // Common overlay / modal dismiss selectors
 const OVERLAY_DISMISS_SELECTORS = [
@@ -167,7 +167,8 @@ async function resolveStepToAction(step, snapshot, screenshot, groundingMap = nu
 
     // ── Visual Grounding Resolution ──
     // If the step explicitly uses a numeric label from visual grounding (e.g. "[5]")
-    if (step.selector && /^\[\d+\]$/.test(step.selector) && groundingMap) {
+    const isGroundingNotation = step.selector && /^\[\d+\]$/.test(step.selector);
+    if (isGroundingNotation && groundingMap) {
         const num = parseInt(step.selector.slice(1, -1));
         const realSelector = groundingMap[num];
         if (realSelector) {
@@ -180,13 +181,16 @@ async function resolveStepToAction(step, snapshot, screenshot, groundingMap = nu
                 _grounded: true
             };
         }
+        // Grounding lookup missed — fall through to goalText resolution
+        console.warn(`[AutonomousLoop] Grounding miss: [${num}] not in current map — using goalText fallback`);
     }
 
     // Steps that need selector resolution (CLICK, TYPE)
     const goalText = step.goalText || step.description || step.selector || '';
 
-    // If the plan already includes a concrete selector, use it directly
-    if (step.selector && (step.selector.startsWith('#') || step.selector.startsWith('.') || step.selector.startsWith('['))) {
+    // If the plan already includes a concrete CSS selector (and NOT a [N] grounding notation), use it directly
+    if (step.selector && !isGroundingNotation &&
+        (step.selector.startsWith('#') || step.selector.startsWith('.') || step.selector.startsWith('['))) {
         const action = {
             type: step.type,
             selector: step.selector,
@@ -210,6 +214,7 @@ async function resolveStepToAction(step, snapshot, screenshot, groundingMap = nu
 
     if (step.type === 'TYPE') {
         action.text = step.text || '';
+        if (step.pressEnter) action.pressEnter = true;
     }
     if (step.type === 'CLICK' && resolved.fallbackText) {
         action.text = resolved.fallbackText;

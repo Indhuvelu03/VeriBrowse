@@ -89,37 +89,84 @@ export async function start(page, goal, options = {}) {
                 emitStatus('Summarizing findings…', 'thinking');
                 console.log('[AgentRuntime] Running deep summary for:', goal);
 
-                // Collect extracted content from step results
+                // 1. Collected extracted text results (EXTRACT action outputs)
                 const extractedTexts = (result.steps || [])
-                    .filter(s => s._success && s.result && typeof s.result === 'string' && s.result.length > 40)
+                    .filter(s => (s._success || s.success) && s.result &&
+                        typeof s.result === 'string' && s.result.length > 40 &&
+                        !s.result.startsWith('Task') && s.result !== 'success')
                     .map(s => s.result)
                     .join('\n\n');
 
-                // Collect page summaries from compactor
+                // 2. Page summaries from the context compactor
                 const compactContext = compactor.getCompactContext();
                 const pageSummaries = compactContext?.pageSummaries
                     ? compactContext.pageSummaries.map(p => `[${p.title || p.url}]\n${p.text}`).join('\n\n')
                     : '';
 
-                const researchData = [extractedTexts, pageSummaries].filter(Boolean).join('\n\n---\n\n');
+                // 3. Step narrative — what the agent actually did (always available)
+                const stepNarrative = (result.steps || [])
+                    .filter(s => (s._success || s.success) && s.type !== 'DONE')
+                    .map((s, i) => {
+                        const desc = s.description || s.reasoning || s.thought || '';
+                        const url = s.url ? ` (${s.url})` : '';
+                        return `${i + 1}. [${s.type || 'ACTION'}]${url} — ${desc}`;
+                    })
+                    .filter(Boolean)
+                    .join('\n');
 
-                if (researchData.trim().length > 100) {
-                    const summaryPrompt = `${DEEP_SUMMARY_PROMPT}\n\n## USER GOAL\n${goal}\n\n## RESEARCH DATA\n${researchData.substring(0, 8000)}`;
-                    const summary = await CreditGuard.generate(summaryPrompt);
-                    bus.emit('agent:chat-response', { goal, response: summary });
-                    console.log('[AgentRuntime] Deep summary emitted.');
-                } else {
-                    // Not enough data — emit what the DONE step returned
-                    const lastDoneResult = result.steps?.findLast?.(s => s.type === 'DONE' || s.action === 'DONE')?.result;
-                    if (lastDoneResult) {
-                        bus.emit('agent:chat-response', { goal, response: lastDoneResult });
-                    }
-                }
+                // Build context — prioritise rich data, fall back to step narrative
+                const researchData = [extractedTexts, pageSummaries, stepNarrative]
+                    .filter(Boolean)
+                    .join('\n\n---\n\n');
+
+                // Always generate an LLM summary — even if only step narrative is available
+                const summaryPrompt = `${DEEP_SUMMARY_PROMPT}\n\n## USER GOAL\n${goal}\n\n## RESEARCH DATA\n${researchData.substring(0, 8000)}`;
+                const summary = await CreditGuard.generate(summaryPrompt);
+                bus.emit('agent:chat-response', { goal, response: summary });
+                console.log('[AgentRuntime] Deep summary emitted.');
+
                 emitStatus('Ready', 'idle');
             } catch (summaryErr) {
                 console.warn('[AgentRuntime] Deep summary failed:', summaryErr.message);
+                // Graceful fallback: explain what was done without LLM
+                const stepCount = result.steps?.filter(s => s._success || s.success).length || 0;
+                bus.emit('agent:chat-response', {
+                    goal,
+                    response: `✅ Task completed in ${stepCount} steps. I browsed, searched, and interacted with the page as requested. Switch to the browser to see the result.`
+                });
                 emitStatus('Ready', 'idle');
             }
+        }
+
+        // ── Non-Deep result: surface the DONE step's result as a chat reply ──
+        if (!deepSummary && result.success) {
+            const successSteps = result.steps || [];
+            const doneStep = successSteps.slice().reverse().find(s => s.type === 'DONE');
+            const doneResult = doneStep?.result;
+
+            // Also collect EXTRACT step output — actual page data captured during execution
+            const extractResult = successSteps
+                .filter(s => s.type === 'EXTRACT' && (s._success || s.success) && s.result &&
+                    typeof s.result === 'string' && s.result.length > 40)
+                .map(s => s.result)
+                .join('\n\n').trim();
+
+            const stepCount = successSteps.filter(s => s._success || s.success).length || 0;
+            const GENERIC = /^(Task complete|Finished|Done|Task completed|Finished\.)\.?$/i;
+
+            let chatReply;
+            if (doneResult && typeof doneResult === 'string' && doneResult.length > 20 && !GENERIC.test(doneResult)) {
+                // Planner provided a meaningful DONE result (e.g. product name + price)
+                chatReply = doneResult;
+            } else if (extractResult) {
+                // Fall back to EXTRACT output — trim to ~800 chars for readability
+                chatReply = extractResult.length > 800
+                    ? extractResult.slice(0, 800) + '…'
+                    : extractResult;
+            } else {
+                chatReply = `✅ Done in ${stepCount} step${stepCount !== 1 ? 's' : ''}. Check the browser for the result.`;
+            }
+            bus.emit('agent:chat-response', { goal, response: chatReply });
         }
 
         // Notify renderer

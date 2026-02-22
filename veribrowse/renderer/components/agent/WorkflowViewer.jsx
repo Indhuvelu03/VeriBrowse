@@ -4,151 +4,119 @@ import React from 'react';
 import { useWorkflowStore } from '../../store/workflowStore';
 import StepCard from './StepCard';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RefreshCcw, Sparkles, Layers, CheckCircle2, BookmarkPlus } from 'lucide-react';
+import { CheckCircle2, BookmarkPlus, XCircle } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
 
-const STATUS_BANNERS = {
-    planning: {
-        icon: Sparkles,
-        text: 'Planning your task…',
-        color: 'text-violet-400',
-        bg: 'from-violet-500/5 to-transparent',
-        border: 'border-violet-500/15',
-        pulse: true,
-    },
-    acting: {
-        icon: Sparkles,
-        text: 'Executing steps…',
-        color: 'text-sky-400',
-        bg: 'from-sky-500/5 to-transparent',
-        border: 'border-sky-500/15',
-        pulse: false,
-    },
-    replanning: {
-        icon: RefreshCcw,
-        text: 'Rethinking strategy…',
-        color: 'text-amber-400',
-        bg: 'from-amber-500/5 to-transparent',
-        border: 'border-amber-500/15',
-        pulse: true,
-    },
-    verifying: {
-        icon: Layers,
-        text: 'Verifying action…',
-        color: 'text-teal-400',
-        bg: 'from-teal-500/5 to-transparent',
-        border: 'border-teal-500/15',
-        pulse: false,
-    },
-};
+// Human-readable status line while running
+function StatusLine({ agentStatus }) {
+    const labels = {
+        planning:    'Planning steps…',
+        acting:      'Working on it…',
+        executing:   'Working on it…',
+        verifying:   'Verifying…',
+        replanning:  'Adjusting approach…',
+        thinking:    'Thinking…',
+        summarizing: 'Writing summary…',
+    };
+    const text = labels[agentStatus] || 'Working…';
+    return (
+        <motion.p
+            key={agentStatus}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="text-[11px] text-sky-400 font-semibold tracking-wide animate-pulse px-1"
+        >
+            {text}
+        </motion.p>
+    );
+}
 
 export default function WorkflowViewer() {
     const { steps, agentStatus, isRunning, goal } = useWorkflowStore();
-    const banner = STATUS_BANNERS[agentStatus];
 
     if (!isRunning && steps.length === 0) return null;
 
-    return (
-        <div className="flex flex-col gap-1.5">
+    const doneCount  = steps.filter(s => s.status === 'done' || s.status === 'success').length;
+    const totalPlan  = steps.reduce((max, s) => s.totalSteps ? Math.max(max, s.totalSteps) : max, 0);
+    const displayCount = totalPlan > 0 ? totalPlan : doneCount;
+    const failed    = steps.some(s => s.status === 'failed' || s.status === 'fail');
 
-            {/* Goal reminder chip */}
-            <AnimatePresence>
-                {isRunning && goal && (
-                    <motion.div
-                        initial={{ opacity: 0, y: -4 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        className="px-3 py-2 bg-white/[0.02] border border-white/5 rounded-xl mb-1"
-                    >
-                        <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-0.5">Goal</p>
-                        <p className="text-[13px] text-gray-300 leading-snug">{goal}</p>
-                    </motion.div>
-                )}
+    // Only show plan steps + key meta-steps; filter out noisy internal events
+    const META_HIDE = new Set(['MAX_ACTIONS', 'ABORT', 'ERROR', 'CANCELLED']);
+    const visibleSteps = steps.filter(s => !META_HIDE.has(s.action));
+
+    return (
+        <div className="flex flex-col gap-0 mt-1">
+
+            {/* Running status */}
+            <AnimatePresence mode="wait">
+                {isRunning && <StatusLine agentStatus={agentStatus} />}
             </AnimatePresence>
 
-            {/* Status Banner */}
-            <AnimatePresence mode="wait">
-                {isRunning && banner && (
-                    <motion.div
-                        key={agentStatus}
-                        initial={{ opacity: 0, x: -8 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, x: 8 }}
-                        transition={{ duration: 0.18 }}
-                        className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border bg-gradient-to-r ${banner.bg} ${banner.border}`}
-                    >
-                        <banner.icon
-                            size={14}
-                            className={`${banner.color} ${banner.pulse ? 'animate-pulse' : (agentStatus === 'replanning' ? 'animate-spin' : '')}`}
+            {/* Step feed */}
+            <div className="mt-2 px-1">
+                <AnimatePresence initial={false}>
+                    {visibleSteps.map((step, i) => (
+                        <StepCard
+                            key={step.id || i}
+                            step={step}
+                            isLast={i === visibleSteps.length - 1}
                         />
-                        <span className={`text-[11px] font-semibold tracking-wide ${banner.color}`}>
-                            {banner.text}
-                        </span>
+                    ))}
+                </AnimatePresence>
+            </div>
 
-                        {/* Animated dots */}
-                        <div className="flex items-center gap-1 ml-auto">
-                            {[0, 1, 2].map(i => (
-                                <motion.span
-                                    key={i}
-                                    className={`w-1 h-1 rounded-full ${banner.color.replace('text-', 'bg-')}`}
-                                    animate={{ opacity: [0.2, 1, 0.2] }}
-                                    transition={{ duration: 1, delay: i * 0.2, repeat: Infinity }}
-                                />
-                            ))}
-                        </div>
-                    </motion.div>
-                )}
-
-                {/* Completed banner */}
+            {/* Completion row */}
+            <AnimatePresence>
                 {!isRunning && steps.length > 0 && (
                     <motion.div
-                        key="done"
-                        initial={{ opacity: 0, scale: 0.96 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="flex flex-col gap-2"
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.1, duration: 0.22 }}
+                        className="flex flex-col gap-2 mt-1 px-1"
                     >
-                        <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border border-emerald-500/15 bg-gradient-to-r from-emerald-500/5 to-transparent">
-                            <CheckCircle2 size={14} className="text-emerald-400" />
-                            <span className="text-[11px] font-semibold tracking-wide text-emerald-400">
-                                Task complete · {steps.length} steps
+                        {/* Status chip */}
+                        <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${
+                            failed
+                                ? 'border-red-500/15 bg-red-500/5 text-red-400'
+                                : 'border-emerald-500/15 bg-emerald-500/5 text-emerald-400'
+                        }`}>
+                            {failed
+                                ? <XCircle size={13} />
+                                : <CheckCircle2 size={13} />
+                            }
+                            <span className="text-[11px] font-semibold tracking-wide">
+                                {failed
+                                    ? `Completed with errors  ${doneCount} of ${displayCount} done`
+                                    : `Done  ${displayCount} step${displayCount > 1 ? 's' : ''}`
+                                }
                             </span>
                         </div>
 
-                        {/* Save Skill Action */}
-                        <motion.button
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.4 }}
-                            onClick={async () => {
-                                try {
-                                    const domain = new URL(window.location.href).hostname; // Fallback hostname
-                                    await window.electronAPI.skills.save(domain, goal, steps);
-                                    useUIStore.getState().addToast('Skill saved to library!', 'success');
-                                } catch (e) {
-                                    useUIStore.getState().addToast('Saved to library!', 'success');
-                                }
-                            }}
-                            className="flex items-center justify-center gap-2 py-2.5 px-4 bg-sky-500 text-black text-[11px] font-bold uppercase tracking-widest rounded-xl hover:bg-sky-400 active:scale-95 transition-all shadow-lg shadow-sky-500/10"
-                        >
-                            <BookmarkPlus size={14} />
-                            Keep this Skill
-                        </motion.button>
+                        {/* Save skill */}
+                        {!failed && (
+                            <motion.button
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                transition={{ delay: 0.35 }}
+                                onClick={async () => {
+                                    try {
+                                        await window.electronAPI.skills.save('page', goal, steps);
+                                        useUIStore.getState().addToast('Skill saved!', 'success');
+                                    } catch {
+                                        useUIStore.getState().addToast('Saved!', 'success');
+                                    }
+                                }}
+                                className="flex items-center justify-center gap-1.5 py-2 px-4 rounded-xl border border-white/8 bg-white/[0.03] hover:bg-white/[0.06] text-gray-400 hover:text-white text-[11px] font-semibold tracking-widest uppercase transition-all active:scale-95"
+                            >
+                                <BookmarkPlus size={12} />
+                                Save as Skill
+                            </motion.button>
+                        )}
                     </motion.div>
                 )}
-            </AnimatePresence>
-
-            {/* Step Cards */}
-            <AnimatePresence initial={false}>
-                {steps.map((step, index) => (
-                    <motion.div
-                        key={step.id || index}
-                        initial={{ opacity: 0, x: 16, height: 0 }}
-                        animate={{ opacity: 1, x: 0, height: 'auto' }}
-                        transition={{ delay: Math.min(index * 0.04, 0.3), duration: 0.2 }}
-                    >
-                        <StepCard step={step} />
-                    </motion.div>
-                ))}
             </AnimatePresence>
         </div>
     );

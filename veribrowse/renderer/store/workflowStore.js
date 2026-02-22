@@ -189,7 +189,24 @@ export const useWorkflowStore = create(
             }),
 
             setCredits: (used) => set({ creditsUsed: used }),
-            setError: (error) => set({ error, isRunning: false, agentStatus: 'idle' })
+            setError: (error) => set({ error, isRunning: false, agentStatus: 'idle' }),
+
+            // Cancel the currently running workflow/task
+            cancelWorkflow: () => {
+                if (!get().isRunning) return;
+                console.log('[workflowStore] Cancelling workflow');
+                if (window.electronAPI?.agent?.cancelAutonomous) {
+                    window.electronAPI.agent.cancelAutonomous();
+                }
+                set({
+                    isRunning: false,
+                    isPaused: false,
+                    needsHuman: false,
+                    agentStatus: 'idle',
+                    error: 'Cancelled by user'
+                });
+                get().addMessage('agent', '⏹️ Task cancelled by user.');
+            }
         }),
         {
             name: 'veribrowse-sessions',

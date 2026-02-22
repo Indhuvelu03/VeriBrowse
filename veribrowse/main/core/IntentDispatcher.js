@@ -72,6 +72,9 @@ const SITE_MAP = {
     gmail: 'https://mail.google.com',
 };
 
+// Detects multi-step / compound instructions that should NOT be QUICK_ACTION
+const MULTI_STEP_PATTERN = /,?\s+(then|and then|after that|next|also|followed by|go back|scroll down|scroll up|click on|search for|apply|filter|fill|type|submit)/i;
+
 /**
  * Stage 1: Try to classify without an LLM call.
  * Returns a classification object or null if uncertain.
@@ -91,21 +94,32 @@ function heuristicClassify(input) {
         };
     }
 
-    // 2. Direct URL
-    if (URL_PATTERN.test(trimmed)) {
+    // 2. Direct URL (bare URL with no extra instructions)
+    if (URL_PATTERN.test(trimmed) && !MULTI_STEP_PATTERN.test(trimmed)) {
+        const urlToken = trimmed.split(/[\s,]/)[0]; // grab only the URL token
         return {
             intent_type: Intents.QUICK_ACTION,
             confidence_score: 0.99,
             reasoning_summary: 'Input is a direct URL',
             response: null,
-            url: trimmed.startsWith('http') ? trimmed : `https://${trimmed}`,
+            url: urlToken.startsWith('http') ? urlToken : `https://${urlToken}`,
             action: { type: 'navigate' },
         };
     }
 
-    // 3. Navigation command: "go to X", "open Y"
+    // 3. Navigation command: "go to X", "open Y" — only for simple single-destination commands
     if (NAVIGATE_PATTERNS.test(lower)) {
         const sitePart = lower.replace(NAVIGATE_PATTERNS, '').trim();
+        // If the remainder contains multi-step instructions, route to LONG_HORIZON
+        if (MULTI_STEP_PATTERN.test(sitePart)) {
+            return {
+                intent_type: Intents.LONG_HORIZON,
+                confidence_score: 0.92,
+                reasoning_summary: 'Navigate + multi-step instructions detected',
+                response: null,
+                url: null,
+            };
+        }
         const url = resolveUrl(sitePart);
         if (url) {
             return {
@@ -161,12 +175,14 @@ function hasLongHorizonKeyword(lower) {
 }
 
 function resolveUrl(sitePart) {
-    if (sitePart.startsWith('http')) return sitePart;
-    if (sitePart.includes('.')) return `https://${sitePart}`;
-    if (SITE_MAP[sitePart]) return SITE_MAP[sitePart];
+    // Extract only the first token (URL stops at space or comma)
+    const token = sitePart.split(/[\s,]/)[0].trim();
+    if (token.startsWith('http')) return token;
+    if (token.includes('.')) return `https://${token}`;
+    if (SITE_MAP[token]) return SITE_MAP[token];
     // If it looks like a single word that could be a site
-    if (/^[a-z0-9]+$/i.test(sitePart) && sitePart.length > 2) {
-        return `https://www.${sitePart}.com`;
+    if (/^[a-z0-9]+$/i.test(token) && token.length > 2) {
+        return `https://www.${token}.com`;
     }
     return null;
 }

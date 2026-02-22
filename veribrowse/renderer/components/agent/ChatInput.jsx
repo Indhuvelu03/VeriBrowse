@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Sparkles, Target, Zap, Wand2, FlaskConical } from 'lucide-react';
+import { ArrowUp, Square, Sparkles, Target, Zap, Wand2, FlaskConical } from 'lucide-react';
 import { useWorkflowStore } from '../../store/workflowStore';
 import { clsx } from 'clsx';
 
@@ -9,7 +9,7 @@ export default function ChatInput() {
     const [prompt, setPrompt] = useState('');
     const [mode, setMode] = useState('auto'); // 'auto' | 'think' | 'refine' | 'act' | 'deep'
     const textareaRef = useRef(null);
-    const { startWorkflow, isRunning } = useWorkflowStore();
+    const { startWorkflow, isRunning, cancelWorkflow } = useWorkflowStore();
 
     useEffect(() => {
         if (textareaRef.current) {
@@ -69,16 +69,26 @@ export default function ChatInput() {
                     placeholder={placeholders[mode]}
                     className="flex-1 bg-transparent border-none py-3 px-4 text-sm text-gray-200 placeholder:text-gray-600 focus:outline-none focus:ring-0 resize-none"
                 />
-                <button
-                    onClick={handleSend}
-                    disabled={!prompt.trim() || isRunning}
-                    className={clsx(
-                        "w-8 h-8 mr-2 rounded-xl flex items-center justify-center transition-all",
-                        prompt.trim() && !isRunning ? "bg-white text-black" : "bg-white/5 text-gray-600"
-                    )}
-                >
-                    <ArrowUp size={18} />
-                </button>
+                {isRunning ? (
+                    <button
+                        onClick={cancelWorkflow}
+                        className="w-8 h-8 mr-2 rounded-xl flex items-center justify-center transition-all bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300 border border-red-500/30"
+                        title="Stop task"
+                    >
+                        <Square size={14} fill="currentColor" />
+                    </button>
+                ) : (
+                    <button
+                        onClick={handleSend}
+                        disabled={!prompt.trim()}
+                        className={clsx(
+                            "w-8 h-8 mr-2 rounded-xl flex items-center justify-center transition-all",
+                            prompt.trim() ? "bg-white text-black" : "bg-white/5 text-gray-600"
+                        )}
+                    >
+                        <ArrowUp size={18} />
+                    </button>
+                )}
             </div>
         </div>
     );

@@ -19,79 +19,66 @@ const CLASS_PREFIX = 'vb-grounding-label';
  * @returns {Promise<Map<number, string>>} Mapping of label # to a best-guess CSS selector
  */
 export async function markPage(page) {
-    return await page.evaluate(({ containerId, classPrefix }) => {
-        // 1. Cleanup old overlay if exists
+    // Use string-based evaluate so Babel never injects webpack polyfill references
+    // into code that runs in the browser page sandbox.
+    const script = `(function(containerId, classPrefix) {
+        // Guard: body not ready yet — return empty map
+        if (!document.body) return {};
+
         var container = document.getElementById(containerId);
-        if (container) container.remove();
+        if (container) container.parentNode.removeChild(container);
 
         container = document.createElement('div');
         container.id = containerId;
-        container.style.cssText = 'position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2147483647;';
+        container.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:2147483647;';
         document.body.appendChild(container);
 
-        // 2. CSS for labels
         var style = document.createElement('style');
-        style.innerHTML = '.' + classPrefix + ' { ' +
-            'position: absolute; background-color: #ff3e00; color: white; ' +
-            'font-family: "JetBrains Mono", monospace; font-size: 11px; ' +
-            'font-weight: bold; padding: 1px 4px; border-radius: 3px; ' +
-            'box-shadow: 0 2px 4px rgba(0,0,0,0.3); border: 1px solid white; ' +
-            'pointer-events: none; white-space: nowrap; z-index: 2147483647; opacity: 0.95; ' +
-            '}';
+        style.innerHTML = '.' + classPrefix + '{position:absolute;background-color:#ff3e00;color:white;font-family:monospace;font-size:11px;font-weight:bold;padding:1px 4px;border-radius:3px;box-shadow:0 2px 4px rgba(0,0,0,0.3);border:1px solid white;pointer-events:none;white-space:nowrap;z-index:2147483647;opacity:0.95;}';
         container.appendChild(style);
 
-        // 3. Find candidates (avoid Array.from/filter/forEach to prevent Babel polyfill errors)
-        var elements = document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [onclick]');
+        var elements = document.querySelectorAll('a,button,input,select,textarea,[role="button"],[role="link"],[role="checkbox"],[onclick]');
         var candidates = [];
         for (var i = 0; i < elements.length; i++) {
             var el = elements[i];
             var rect = el.getBoundingClientRect();
-            var styleObj = window.getComputedStyle(el);
+            var st = window.getComputedStyle(el);
             if (rect.width > 2 && rect.height > 2 &&
                 rect.top < window.innerHeight && rect.bottom > 0 &&
-                styleObj.visibility !== 'hidden' &&
-                styleObj.display !== 'none') {
+                st.visibility !== 'hidden' && st.display !== 'none') {
                 candidates.push(el);
             }
         }
 
         var mapping = {};
         for (var j = 0; j < candidates.length; j++) {
-            var elCandidate = candidates[j];
-            var labelNum = j + 1;
-            var cRect = elCandidate.getBoundingClientRect();
+            var ec = candidates[j];
+            var num = j + 1;
+            var cr = ec.getBoundingClientRect();
 
-            var label = document.createElement('div');
-            label.className = classPrefix;
-            label.innerText = labelNum;
+            var lbl = document.createElement('div');
+            lbl.className = classPrefix;
+            lbl.innerText = num;
+            lbl.style.top  = (cr.top  + window.scrollY - 5) + 'px';
+            lbl.style.left = (cr.left + window.scrollX - 5) + 'px';
+            container.appendChild(lbl);
 
-            var top = cRect.top + window.scrollY;
-            var left = cRect.left + window.scrollX;
-
-            label.style.top = (top - 5) + 'px';
-            label.style.left = (left - 5) + 'px';
-
-            container.appendChild(label);
-
-            // Generate a selector
-            var selector = elCandidate.id ? '#' + elCandidate.id : elCandidate.tagName.toLowerCase();
-            if (elCandidate.className && typeof elCandidate.className === 'string') {
-                var classParts = elCandidate.className.split(/\s+/);
-                var validClasses = [];
-                for (var k = 0; k < classParts.length; k++) {
-                    if (classParts[k] && classParts[k].indexOf(':') === -1) {
-                        validClasses.push(classParts[k]);
-                    }
+            var sel = ec.id ? '#' + ec.id : ec.tagName.toLowerCase();
+            if (ec.className && typeof ec.className === 'string') {
+                var parts = ec.className.split(' ');
+                var valid = [];
+                for (var k = 0; k < parts.length; k++) {
+                    var p = parts[k];
+                    if (p && p.charAt(0) !== ':' && p.indexOf(':') === -1) valid.push(p);
+                    if (valid.length >= 2) break;
                 }
-                if (validClasses.length > 0) {
-                    selector += '.' + validClasses.slice(0, 2).join('.');
-                }
+                if (valid.length > 0) sel += '.' + valid.join('.');
             }
-            mapping[labelNum] = selector;
+            mapping[num] = sel;
         }
-
         return mapping;
-    }, { containerId: CONTAINER_ID, classPrefix: CLASS_PREFIX });
+    })(${JSON.stringify(CONTAINER_ID)}, ${JSON.stringify(CLASS_PREFIX)})`;
+    return await page.evaluate(script);
 }
 
 /**
@@ -99,8 +86,8 @@ export async function markPage(page) {
  * @param {import('playwright').Page} page 
  */
 export async function unmarkPage(page) {
-    await page.evaluate((containerId) => {
-        const container = document.getElementById(containerId);
-        if (container) container.remove();
-    }, CONTAINER_ID).catch(() => { });
+    await page.evaluate(`
+        var el = document.getElementById(${JSON.stringify(CONTAINER_ID)});
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+    `).catch(() => { });
 }

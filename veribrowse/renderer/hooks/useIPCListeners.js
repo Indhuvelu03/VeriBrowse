@@ -150,16 +150,54 @@ export default function useIPCListeners() {
             // Forward live step updates from the autonomous loop to the workflow store
             const { steps } = useWorkflowStore.getState();
             const newStep = {
-                id: `auto-${Date.now()}`,
+                id: `auto-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                 tool: step.action || 'unknown',
-                description: step.thought || '',
-                status: step.status === 'success' ? 'done' : step.status === 'fail' ? 'failed' : 'executing',
+                action: step.action || 'unknown',
+                description: step.reasoning || step.thought || step.description || '',
+                thought: step.thought || step.reasoning || '',
+                status: step.status === 'success' ? 'done'
+                    : step.status === 'fail' ? 'failed'
+                    : step.status === 'warn' ? 'warn'
+                    : step.status === 'running' ? 'running'
+                    : 'executing',
                 result: step.result || step.verification || null,
+                error: step.error || null,
+                stepIndex: step.stepIndex || null,
+                totalSteps: step.totalSteps || null,
             };
-            setSteps([...steps, newStep]);
 
-            // DONE step: just update UI state — do NOT add a chat bubble here.
-            // Rich output comes via agent:chat-response (Deep mode) or agent:autonomous-done.
+            let updatedSteps;
+
+            // PRIMARY dedup: if step has a stepIndex, always update the existing entry
+            // for that plan position in-place (no matter the previous status).
+            // This means retries of the same plan step overwrite — never duplicate.
+            if (newStep.stepIndex != null) {
+                const existingPlanIdx = steps.findIndex(s => s.stepIndex === newStep.stepIndex);
+                if (existingPlanIdx >= 0) {
+                    updatedSteps = steps.map((s, i) => i === existingPlanIdx ? { ...s, ...newStep } : s);
+                } else {
+                    updatedSteps = [...steps, newStep];
+                }
+            } else {
+                // FALLBACK dedup for meta-steps (PLAN, REPLAN, SKILL_HIT, DONE, etc.):
+                // replace the most recent running entry of the same action type.
+                let existingIdx = -1;
+                for (let i = steps.length - 1; i >= 0; i--) {
+                    const s = steps[i];
+                    if (s.tool === newStep.tool && (s.status === 'running' || s.status === 'executing')) {
+                        existingIdx = i;
+                        break;
+                    }
+                }
+                if (existingIdx >= 0 && (newStep.status === 'done' || newStep.status === 'failed' || newStep.status === 'warn')) {
+                    updatedSteps = steps.map((s, i) => i === existingIdx ? { ...s, ...newStep } : s);
+                } else {
+                    updatedSteps = [...steps, newStep];
+                }
+            }
+
+            setSteps(updatedSteps);
+
             if (step.status === 'success' && step.action === 'DONE') {
                 useWorkflowStore.setState({ isRunning: false, agentStatus: 'idle' });
                 addToast('Task completed.', 'success');

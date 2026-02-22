@@ -157,7 +157,7 @@ export default function AgentPanel() {
             </AnimatePresence>
 
             {/* Content Area */}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-hide flex flex-col py-4 px-4 gap-4">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-hide flex flex-col py-4 px-4 gap-3">
                 {/* Empty State */}
                 {messages.length === 0 && !isRunning && (
                     <div className="flex-1 flex flex-col items-center justify-center text-center gap-3 opacity-40 select-none">
@@ -166,15 +166,50 @@ export default function AgentPanel() {
                     </div>
                 )}
 
-                {/* Message Bubbles */}
-                {messages.map((msg, i) => (
-                    msg.role === 'user'
-                        ? <UserBubble key={i} content={msg.content} />
-                        : <AgentBubble key={i} content={msg.content} />
-                ))}
+                {/*
+                  Message + Step interleaving:
+                  For the current workflow turn, inject WorkflowViewer between
+                  the user's triggering message and the agent's final response.
+                  All previous turns render as plain message pairs.
 
-                {/* Live Workflow Steps (only while running) */}
-                {isRunning && <WorkflowViewer />}
+                  Layout (per turn):
+                    [user bubble]
+                    [step feed  ]  ← only for last / active turn
+                    [agent bubble] ← summary / chat reply
+                */}
+                {(() => {
+                    const hasActiveWorkflow = isRunning || steps.length > 0;
+                    // Index of last agent message that belongs to the current workflow turn
+                    const lastAgentIdx = (messages.length > 0 && messages[messages.length - 1]?.role === 'agent' && hasActiveWorkflow)
+                        ? messages.length - 1
+                        : -1;
+
+                    return messages.map((msg, i) => {
+                        const isLastAgent = i === lastAgentIdx;
+                        const isLastUser  = !hasActiveWorkflow ? false :
+                            msg.role === 'user' && (i === messages.length - 1 || i === messages.length - 2);
+
+                        return (
+                            <React.Fragment key={i}>
+                                {msg.role === 'user'
+                                    ? <UserBubble content={msg.content} />
+                                    : !isLastAgent && <AgentBubble content={msg.content} />
+                                }
+                                {/* Inject step feed after the user bubble that triggered the workflow */}
+                                {isLastUser && (isRunning || steps.length > 0) && (
+                                    <WorkflowViewer />
+                                )}
+                                {/* Re-render the last agent message AFTER the steps */}
+                                {isLastAgent && <AgentBubble content={msg.content} />}
+                            </React.Fragment>
+                        );
+                    });
+                })()}
+
+                {/* Step feed when there are no messages yet (first run) */}
+                {messages.length === 0 && (isRunning || steps.length > 0) && (
+                    <WorkflowViewer />
+                )}
 
                 {/* HITL Card */}
                 <HITLCard />

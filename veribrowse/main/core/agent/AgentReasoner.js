@@ -110,6 +110,9 @@ export async function planSteps(goal, snapshot = null, screenshot = null) {
     // Validate each step has at minimum { type, description }
     plan = plan.filter(step => step && step.type);
 
+    // Hard cap — never return more than 10 steps regardless of LLM output
+    plan = plan.slice(0, 10);
+
     // Ensure the plan ends with DONE if not already
     if (plan.length > 0 && plan[plan.length - 1].type !== 'DONE') {
         plan.push({ type: 'DONE', description: 'Task complete', result: 'Finished' });
@@ -210,6 +213,9 @@ export async function replan(goal, completedSteps, remainingPlan, stuckReason, s
     if (plan && plan.steps && Array.isArray(plan.steps)) plan = plan.steps;
     if (!Array.isArray(plan)) plan = plan && plan.type ? [plan] : [];
     plan = plan.filter(step => step && step.type);
+
+    // Hard cap on revised plan too
+    plan = plan.slice(0, 8);
 
     if (plan.length > 0 && plan[plan.length - 1].type !== 'DONE') {
         plan.push({ type: 'DONE', description: 'Task complete', result: 'Finished' });
