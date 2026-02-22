@@ -147,7 +147,7 @@ export default function useIPCListeners() {
 
         // --- AUTONOMOUS LOOP STEP EVENTS ---
         api.on('agent:execution-step', (step) => {
-            // Forward live step updates from the autonomous browserAgentLoop to the workflow store
+            // Forward live step updates from the autonomous loop to the workflow store
             const { steps } = useWorkflowStore.getState();
             const newStep = {
                 id: `auto-${Date.now()}`,
@@ -158,10 +158,11 @@ export default function useIPCListeners() {
             };
             setSteps([...steps, newStep]);
 
-            // Update agent status based on step
+            // DONE step: just update UI state — do NOT add a chat bubble here.
+            // Rich output comes via agent:chat-response (Deep mode) or agent:autonomous-done.
             if (step.status === 'success' && step.action === 'DONE') {
-                setSummary(step.result || step.thought);
-                addToast('Autonomous task completed.', 'success');
+                useWorkflowStore.setState({ isRunning: false, agentStatus: 'idle' });
+                addToast('Task completed.', 'success');
             }
         });
 

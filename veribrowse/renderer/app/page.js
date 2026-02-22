@@ -1,11 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { useUIStore } from '../store/uiStore';
 import { useTabStore } from '../store/tabStore';
-import { useWorkflowStore } from '../store/workflowStore';
-import { clsx } from 'clsx';
-import useIPCListeners from '../hooks/useIPCListeners'; // Using existing hook but will update it to new stores
+import useIPCListeners from '../hooks/useIPCListeners';
 
 // Shell Components
 import WindowControls from '../components/shell/WindowControls';
@@ -48,18 +46,25 @@ export default function MainLayout() {
 
             {/* 2. Main Workspace (Base Layer) */}
             <div className="flex-1 flex flex-col relative h-full overflow-hidden bg-obsidian">
-                {/* Global Drag Handle - Restricted center area */}
-                <div className="absolute top-0 left-64 right-[400px] h-10 drag-region z-[200] pointer-events-auto" />
 
-                {/* Top Headers - Navigation Area */}
-                <div className="flex flex-col flex-shrink-0 pt-10">
-                    <Topbar />
-                    <Tabs />
+                {/* ── Title Bar Row: drag region + tabs + window controls ── */}
+                <div className="h-10 flex-shrink-0 flex items-center relative z-[1000] drag-region">
+                    {/* Tabs sit in the drag region — they are no-drag themselves */}
+                    <div className="flex-1 flex items-center h-full overflow-hidden no-drag">
+                        <Tabs />
+                    </div>
+                    {/* Window controls — right side */}
+                    <div className="h-full shrink-0 no-drag">
+                        <WindowControls />
+                    </div>
                 </div>
+
+                {/* ── Nav Bar ── */}
+                <Topbar />
 
                 {/* Shared Viewport Area */}
                 <div className="flex-1 relative flex overflow-hidden">
-                    {/* Main Content Area */}
+                    {/* Main Content Area — BrowserLayer handles native view offset internally */}
                     <div className="absolute inset-0 z-0">
                         {/* The Page Layer */}
                         <AnimatePresence mode="wait">
@@ -90,21 +95,25 @@ export default function MainLayout() {
                         </AnimatePresence>
                     </div>
 
-                    {/* 3. Agent Panel (Overlay Layer) */}
-                    <div className={clsx(
-                        "absolute inset-y-0 right-0 z-50 transition-transform duration-300 ease-in-out",
-                        agentPanelOpen ? "translate-x-0" : "translate-x-full"
-                    )}>
-                        <ErrorBoundary name="AgentPanel">
-                            <AgentPanel />
-                        </ErrorBoundary>
-                    </div>
+                    {/* 3. Agent Panel — AnimatePresence fully unmounts when closed so
+                            the native BrowserView never has a partial-panel overlap */}
+                    <AnimatePresence>
+                        {agentPanelOpen && (
+                            <motion.div
+                                key="agent-panel"
+                                initial={{ x: '100%' }}
+                                animate={{ x: 0 }}
+                                exit={{ x: '100%' }}
+                                transition={{ duration: 0.25, ease: 'easeInOut' }}
+                                className="absolute inset-y-0 right-0 z-[1001]"
+                            >
+                                <ErrorBoundary name="AgentPanel">
+                                    <AgentPanel />
+                                </ErrorBoundary>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
                 </div>
-            </div>
-
-            {/* 4. Global Window Controls (Topmost Layer) */}
-            <div className="absolute top-0 right-0 h-10 w-48 z-[1000] pointer-events-auto no-drag flex justify-end">
-                <WindowControls />
             </div>
 
             {/* 5. Utility Layers */}

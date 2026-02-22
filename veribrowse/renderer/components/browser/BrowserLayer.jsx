@@ -10,14 +10,22 @@ import { useUIStore } from '../../store/uiStore';
 // shrink the BrowserView's right boundary when the panel is open.
 const AGENT_PANEL_WIDTH = 420;
 
+// Pages that show as full overlays — native view must be hidden while they're open.
+const OVERLAY_PAGES = new Set(['history', 'downloads', 'settings', 'skills']);
+
 export default function BrowserLayer() {
     const { activeTabId, userTabs } = useTabStore();
-    const { agentPanelOpen, activeView } = useUIStore();
+    const { agentPanelOpen, activeView, currentPage } = useUIStore();
     const containerRef = useRef(null);
+
+    // Any overlay page (history, downloads, settings, skills) must hide the
+    // native view — it's an OS-level layer that ignores DOM z-index.
+    const overlayOpen = OVERLAY_PAGES.has(currentPage);
 
     // Store agentPanelOpen in a ref so ResizeObserver callback always sees the
     // current value without needing to be re-registered.
     const agentPanelOpenRef = useRef(agentPanelOpen);
+    const prevAgentPanelOpen = useRef(agentPanelOpen);
     useEffect(() => { agentPanelOpenRef.current = agentPanelOpen; }, [agentPanelOpen]);
 
     const activeTab = userTabs.find(t => t.id === activeTabId);
@@ -26,8 +34,8 @@ export default function BrowserLayer() {
     useEffect(() => {
         if (!activeTabId || !window.electronAPI?.browser) return;
 
-        if (!hasUrl || activeView !== 'browser') {
-            // Hide the native BrowserView so home page / agent panel / overlays show through
+        if (!hasUrl || activeView !== 'browser' || overlayOpen) {
+            // Hide the native BrowserView so home page / overlays / agent panel show through
             window.electronAPI.browser.hideViewport(activeTabId);
             return;
         }
@@ -50,19 +58,30 @@ export default function BrowserLayer() {
 
         const observer = new ResizeObserver(updateBounds);
         observer.observe(container);
-        updateBounds();
 
-        // Re-run after CSS panel open/close transition completes (300ms)
-        const timeout = setTimeout(updateBounds, 350);
+        const panelJustClosed = prevAgentPanelOpen.current && !agentPanelOpen;
+        prevAgentPanelOpen.current = agentPanelOpen;
+
+        if (panelJustClosed) {
+            // Panel is animating OUT (250ms) — wait until it's fully gone before
+            // expanding the native view, otherwise the native layer bleeds through.
+            const timeout = setTimeout(updateBounds, 280);
+            return () => { observer.disconnect(); clearTimeout(timeout); };
+        }
+
+        // Panel opened or unrelated change — resize immediately, then again after
+        // any CSS transition settles.
+        updateBounds();
+        const timeout = setTimeout(updateBounds, 300);
 
         return () => {
             observer.disconnect();
             clearTimeout(timeout);
         };
-    }, [activeTabId, agentPanelOpen, activeView, hasUrl]);
+    }, [activeTabId, agentPanelOpen, activeView, hasUrl, overlayOpen]);
 
     // Only render placeholder div when there is a real URL to display
-    if (!hasUrl || activeView !== 'browser') return null;
+    if (!hasUrl || activeView !== 'browser' || overlayOpen) return null;
 
     return (
         <div

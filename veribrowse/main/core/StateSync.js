@@ -25,6 +25,7 @@
  */
 
 import browserManager from './BrowserManager.js';
+import { addHistory } from '../services/SupabaseService.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -136,6 +137,11 @@ export function attachStateSync(page, tabId) {
         const existing = map.get(tabId);
         if (existing) {
             map.set(tabId, { ...existing, url, title });
+        }
+
+        // Persist to history for user tabs only (skip blank/internal/shadow pages)
+        if (!isShadow && url && url !== 'about:blank' && !url.startsWith('chrome://') && !url.startsWith('devtools://')) {
+            addHistory(url, title, null).catch(() => {});
         }
     });
 

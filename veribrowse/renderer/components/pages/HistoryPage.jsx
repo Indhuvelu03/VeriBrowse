@@ -90,7 +90,7 @@ export default function HistoryPage() {
                                 <p className="text-xs text-gray-500 truncate mt-0.5">{item.url}</p>
                             </div>
                             <div className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">
-                                {new Date(item.last_visit_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                {new Date(item.visited_at || item.last_visit_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </div>
                             <ArrowRight size={16} className="text-white opacity-0 group-hover:opacity-100 transition-all translate-x-[-10px] group-hover:translate-x-0" />
                         </button>

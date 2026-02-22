@@ -282,7 +282,7 @@ export default function Topbar() {
     const isSecure = activeTab?.url?.startsWith('https://') && !isFocused;
 
     return (
-        <header className="h-[52px] w-full border-b border-white/[0.06] bg-[#0a0a0d]/80 backdrop-blur-xl flex items-center px-3 gap-2 flex-shrink-0 z-40 relative">
+        <header className="h-11 w-full border-b border-white/[0.06] bg-[#0a0a0d]/80 backdrop-blur-xl flex items-center px-3 gap-2 flex-shrink-0 z-40 relative">
 
             {/* Nav Controls */}
             <div className="flex items-center gap-0.5 shrink-0">

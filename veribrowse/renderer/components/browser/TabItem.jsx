@@ -17,7 +17,7 @@ export default function TabItem({ tab, isActive }) {
         <div
             onClick={() => setActiveTab(tab.id)}
             className={clsx(
-                "h-9 px-4 flex items-center gap-3 min-w-[140px] max-w-[200px] border-r border-white/5 cursor-pointer transition-all relative group",
+                "h-full px-4 flex items-center gap-3 min-w-[140px] max-w-[200px] border-r border-white/5 cursor-pointer transition-all relative group",
                 isActive ? "bg-white/10" : "hover:bg-white/5"
             )}
         >

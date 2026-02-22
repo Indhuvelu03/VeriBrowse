@@ -10,20 +10,11 @@ export default function CreditMeter() {
     const percentage = Math.min((creditsUsed / limit) * 100, 100);
 
     return (
-        <div className="px-4 py-3 bg-white/[0.02] border-t border-white/5">
-            <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-2 py-0.5 bg-white/5 rounded">
-                    Compute Usage
-                </span>
-                <span className={clsx(
-                    "text-[10px] font-bold tracking-tighter",
-                    percentage > 80 ? "text-red-400" : percentage > 50 ? "text-amber-400" : "text-emerald-400"
-                )}>
-                    {creditsUsed} / {limit} Units
-                </span>
-            </div>
-
-            <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+        <div className="px-4 py-1.5 border-t border-white/5 flex items-center gap-3">
+            <span className="text-[9px] font-bold text-gray-600 uppercase tracking-widest shrink-0">
+                Compute
+            </span>
+            <div className="flex-1 h-[3px] bg-white/5 rounded-full overflow-hidden">
                 <div
                     className={clsx(
                         "h-full transition-all duration-500",
@@ -32,6 +23,12 @@ export default function CreditMeter() {
                     style={{ width: `${percentage}%` }}
                 />
             </div>
+            <span className={clsx(
+                "text-[9px] font-bold tracking-tighter shrink-0",
+                percentage > 80 ? "text-red-400" : percentage > 50 ? "text-amber-400" : "text-emerald-400"
+            )}>
+                {creditsUsed}/{limit}
+            </span>
         </div>
     );
 }

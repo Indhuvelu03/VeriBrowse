@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resume: () => ipcRenderer.invoke('agent:resume'),  // HITL resume
     autonomous: (goal) => ipcRenderer.invoke('agent:autonomous', { goal }),
     cancelAutonomous: () => ipcRenderer.send('agent:cancel-autonomous'),
+    generateTitle: (userMsg, agentMsg) => ipcRenderer.invoke('agent:generate-title', { userMsg, agentMsg }),
   },
 
   // ─── Browser & Tabs ───────────────────────────────────────────────────────

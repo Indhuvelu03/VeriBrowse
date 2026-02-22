@@ -31,6 +31,9 @@ export function registerBrowserHandlers() {
 
                 browserManager.userTabs.set(tabId, { ...browserManager.userTabs.get(tabId), url: currentUrl, title });
                 browserManager.mainWindow?.webContents.send('browser:user-tab-updated', { tabId, url: currentUrl, title, isLoading: false });
+
+                // Persist to history
+                SupabaseService.addHistory(currentUrl, title, null).catch(() => {});
             } catch (e) {
                 console.error('[IPC:navigate] Failed:', e.message);
                 browserManager.mainWindow?.webContents.send('browser:user-tab-updated', { tabId, isLoading: false, error: e.message });

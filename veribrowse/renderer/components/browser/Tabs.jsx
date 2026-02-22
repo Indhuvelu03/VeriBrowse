@@ -12,8 +12,8 @@ export default function Tabs() {
     // bar to disappear entirely when closing a second tab.
 
     return (
-        <div className="h-9 w-full bg-obsidian/20 border-b border-white/5 flex items-center overflow-x-auto scrollbar-hide flex-shrink-0">
-            <div className="flex">
+        <div className="h-full w-full bg-obsidian flex items-stretch overflow-x-auto scrollbar-hide flex-shrink-0">
+            <div className="flex h-full">
                 {userTabs.map((tab) => (
                     <TabItem
                         key={tab.id}
@@ -25,7 +25,7 @@ export default function Tabs() {
 
             <button
                 onClick={() => createNewTab()}
-                className="h-full px-3 text-gray-500 hover:text-white hover:bg-white/5 transition-all border-r border-white/5"
+                className="h-full px-3 text-gray-500 hover:text-white hover:bg-white/5 transition-all border-r border-white/5 shrink-0"
             >
                 <Plus size={16} />
             </button>

@@ -115,18 +115,37 @@ export const useWorkflowStore = create(
                 const { activeSessionId, sessions } = get();
                 if (!activeSessionId) return;
 
+                const activeSession = sessions.find(s => s.id === activeSessionId);
+                const isFirstAgentReply = role === 'agent' && activeSession?.messages.length === 1
+                    && activeSession.messages[0]?.role === 'user';
+
                 set({
                     sessions: sessions.map(s =>
                         s.id === activeSessionId
                             ? {
                                 ...s,
                                 messages: [...s.messages, { role, content, timestamp: new Date().toISOString() }],
-                                // Use the first user message as the session title
+                                // Set raw title initially; will be replaced by LLM title on first agent reply
                                 title: s.messages.length === 0 && role === 'user' ? content.slice(0, 60) : s.title
                             }
                             : s
                     )
                 });
+
+                // After first agent reply, generate a contextual title from the exchange
+                if (isFirstAgentReply && window.electronAPI?.agent?.generateTitle) {
+                    const userMsg = activeSession.messages[0].content;
+                    window.electronAPI.agent.generateTitle(userMsg, content)
+                        .then(title => {
+                            if (!title) return;
+                            set(state => ({
+                                sessions: state.sessions.map(s =>
+                                    s.id === activeSessionId ? { ...s, title } : s
+                                )
+                            }));
+                        })
+                        .catch(() => {}); // keep raw title if generation fails
+                }
 
                 // Bug #6 fix: persist to Supabase (fire-and-forget; Supabase may not be configured)
                 if (window.electronAPI?.chat) {

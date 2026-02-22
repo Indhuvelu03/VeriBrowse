@@ -34,17 +34,20 @@ export default function AgentPanel() {
     const activeSession = sessions.find(s => s.id === activeSessionId);
     const messages = activeSession?.messages || [];
     const scrollRef = useRef(null);
+    const bottomRef = useRef(null);
 
     // Auto-scroll to bottom when messages, steps, or summary change
     useEffect(() => {
-        if (scrollRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-        }
-    }, [messages.length, steps, summary]);
+        // setTimeout ensures it fires AFTER React finishes committing the DOM
+        const t = setTimeout(() => {
+            bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 60);
+        return () => clearTimeout(t);
+    }, [messages.length, steps?.length, summary]);
 
     return (
         <div
-            className="w-[420px] h-full bg-obsidian/95 backdrop-blur-3xl border-l border-white/10 flex flex-col shadow-[-20px_0_60px_rgba(0,0,0,0.7)]"
+            className="w-[420px] h-full bg-obsidian border-l border-white/10 flex flex-col overflow-hidden"
         >
             {/* Header */}
             <div className="h-14 border-b border-white/5 flex items-center justify-between px-5 bg-white/[0.03]">
@@ -175,6 +178,9 @@ export default function AgentPanel() {
 
                 {/* HITL Card */}
                 <HITLCard />
+
+                {/* Scroll anchor — always at the bottom */}
+                <div ref={bottomRef} className="h-1 shrink-0" />
             </div>
 
             {/* Footer */}

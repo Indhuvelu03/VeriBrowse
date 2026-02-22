@@ -64,6 +64,15 @@
   .preserve-3d {
     transform-style: preserve-3d;
   }
+
+  /* Hide scrollbar utility — used in AgentPanel and other overflow containers */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* Animations */

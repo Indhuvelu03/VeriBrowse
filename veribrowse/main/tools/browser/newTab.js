@@ -8,8 +8,8 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { BrowserView } from 'electron';
 import bus from '../../core/EventBus.js';
+import browserManager from '../../core/BrowserManager.js';
 
 export default async function newTab(context, { url = 'about:blank', type = 'user', purpose = null }) {
     try {
@@ -34,35 +34,23 @@ export default async function newTab(context, { url = 'about:blank', type = 'use
         };
 
         if (type === 'user') {
-            // 2. Create Electron BrowserView for User Tab
-            const view = new BrowserView({
-                webPreferences: {
-                    nodeIntegration: false,
-                    contextIsolation: true
-                }
+            // 2. Register tab in BrowserManager so ensureBrowserView can find it
+            global.userTabsMap.set(tabId, {
+                playwrightPage: page,
+                url: tabObject.url,
+                title: tabObject.title,
+                type: 'user'
             });
 
-            // FIX A: Attach view to the main window so it's actually visible
-            global.mainWindow.addBrowserView(view);
+            // 3. Create WebContentsView via BrowserManager (hidden at 0,0 until renderer resizes)
+            const view = browserManager.ensureBrowserView(tabId);
 
-            // Set initial bounds — renderer can adjust via 'browser:resize-viewport'
-            const bounds = global.mainWindow.getBounds();
-            view.setBounds({
-                x: 48,
-                y: 128,
-                width: bounds.width - 48,
-                height: bounds.height - 128
-            });
-
-            // FIX B: Load the URL in the BrowserView so the visible tab isn't blank
-            if (url !== 'about:blank') {
+            // 4. Load URL in the WebContentsView so the visible tab isn't blank
+            if (view && url !== 'about:blank') {
                 view.webContents.loadURL(url).catch(e =>
-                    console.warn('[Tool:NewTab] BrowserView loadURL failed:', e.message)
+                    console.warn('[Tool:NewTab] WebContentsView loadURL failed:', e.message)
                 );
             }
-
-            // Map Playwright page to BrowserView is handled in background.js via the global maps
-            global.userTabsMap.set(tabId, { playwrightPage: page, electronBrowserView: view });
 
             // Notify renderer
             bus.emit('browser:user-tab-created', tabObject);

@@ -7,6 +7,7 @@ import { Intents } from './IntentDispatcher.js';
 import * as AgentRuntime from './agent/AgentRuntime.js';
 import UIFeedback from './UIFeedback.js';
 import browserManager from './BrowserManager.js';
+import { REFINE_PROMPT } from '../constants.js';
 
 /**
  * WorkflowEngine
@@ -55,11 +56,42 @@ class WorkflowEngine {
 
     // ─── Primary Entry Point ────────────────────────────────────────────
 
-    async initWorkflow(goal, context, mode = 'refine') {
+    async initWorkflow(goal, context, mode = 'auto') {
         console.log(`[WorkflowEngine] Goal: "${goal}" (mode: ${mode})`);
 
         try {
-            // ── Stage 1: Intent Dispatch ──
+            // ── THINK mode: pure LLM conversation, never touches the browser ──
+            if (mode === 'think') {
+                UIFeedback.emit('THINKING');
+                console.log('[WorkflowEngine] Mode: THINK — forcing CHAT_INTENT');
+                return this._handleChat(goal, { response: null });
+            }
+
+            // ── REFINE mode: rewrite the prompt first, then dispatch ──
+            if (mode === 'refine') {
+                UIFeedback.emit('CLASSIFYING');
+                console.log('[WorkflowEngine] Mode: REFINE — rewriting prompt');
+                let refinedGoal = goal;
+                try {
+                    refinedGoal = await CreditGuard.generate(
+                        `${REFINE_PROMPT}\n\nUser input: ${goal}`
+                    );
+                    refinedGoal = refinedGoal.trim();
+                    console.log(`[WorkflowEngine] Refined goal: "${refinedGoal}"`);
+                    bus.emit('agent:chat-response', {
+                        goal,
+                        response: `✏️ **Refined task:** ${refinedGoal}`,
+                    });
+                    await new Promise(r => setTimeout(r, 600));
+                } catch (e) {
+                    console.warn('[WorkflowEngine] Refine LLM failed, using original goal:', e.message);
+                    refinedGoal = goal;
+                }
+                // Use 'auto' so IntentDispatcher decides: knowledge q → chat, browser task → act
+                return this.initWorkflow(refinedGoal, context, 'auto');
+            }
+
+            // ── Stage 1: Intent Dispatch (auto + act both go through here) ──
             UIFeedback.emit('CLASSIFYING');
 
             const classification = await IntentDispatcher.dispatch(goal, {
@@ -70,13 +102,19 @@ class WorkflowEngine {
             const { intent_type, confidence_score, reasoning_summary } = classification;
             console.log(`[WorkflowEngine] Intent: ${intent_type} (${confidence_score}) — ${reasoning_summary}`);
 
-            // Mode overrides
-            let effectiveIntent = intent_type;
-            if (mode === 'act' && effectiveIntent === Intents.CHAT) {
-                // User forced ACT mode → promote to LONG_HORIZON
-                effectiveIntent = Intents.LONG_HORIZON;
-                console.log('[WorkflowEngine] Mode override: CHAT → LONG_HORIZON (act mode)');
+            // ── DEEP mode: browse + LLM summarize ──
+            if (mode === 'deep') {
+                console.log('[WorkflowEngine] Mode: DEEP — browse + summarize');
+                return this._handleDeep(goal, classification);
             }
+
+            // ── ACT mode: always run as LONG_HORIZON regardless of intent ──
+            let effectiveIntent = intent_type;
+            if (mode === 'act') {
+                effectiveIntent = Intents.LONG_HORIZON;
+                console.log('[WorkflowEngine] Mode: ACT — forcing LONG_HORIZON_AUTOMATION');
+            }
+            // AUTO mode: trust IntentDispatcher (effectiveIntent unchanged)
 
             // ── Route by intent ──
 
@@ -95,7 +133,7 @@ class WorkflowEngine {
                 return this._handleLongHorizon(goal, classification);
             }
 
-            // Fallback: treat unknown as LONG_HORIZON
+            // Fallback
             console.warn(`[WorkflowEngine] Unknown intent '${effectiveIntent}', falling back to LONG_HORIZON`);
             return this._handleLongHorizon(goal, classification);
 
@@ -135,14 +173,17 @@ class WorkflowEngine {
      * QUICK_ACTION: Single-step execution.
      * Navigate, click, or extract — then done.
      */
-    _handleQuickAction(goal, classification) {
+    async _handleQuickAction(goal, classification) {
         const url = classification.url || this.extractUrl(goal);
 
         if (url) {
             UIFeedback.emit('NAVIGATING', url);
+
+            // Emit the step
+            const stepId = `quick-nav-${Date.now()}`;
             bus.emit('execute-step', {
                 step: {
-                    id: `quick-nav-${Date.now()}`,
+                    id: stepId,
                     agent: 'browser',
                     tool: 'navigate',
                     description: `Navigate to ${url}`,
@@ -151,12 +192,42 @@ class WorkflowEngine {
                 },
                 workflowId: null,
             });
-            bus.emit('agent:chat-response', { goal, response: `Navigating to ${url}…` });
+
+            // Immediate acknowledgement
+            bus.emit('agent:chat-response', { goal, response: `📍 Navigating to **${url}**…` });
+
+            // Follow-up once navigation completes
+            const followUp = ({ stepId: sid, result }) => {
+                if (sid !== stepId) return;
+                bus.off('step-result', followUp);
+                const title = result?.result?.title || result?.title || '';
+                const finalUrl = result?.result?.url || url;
+                let siteName;
+                try { siteName = title || new URL(finalUrl.startsWith('http') ? finalUrl : `https://${finalUrl}`).hostname.replace('www.', ''); } catch { siteName = url; }
+                bus.emit('agent:chat-response', {
+                    goal,
+                    response: `✅ **${siteName}** has been opened.\n\nWhat would you like me to do here? I can search, click, extract info, fill a form, or run any task on this page.`,
+                });
+                bus.emit('agent:status', { message: 'Ready', status: 'idle' });
+            };
+            bus.on('step-result', followUp);
+
+            // Safety: if no step-result within 8s, send the follow-up anyway
+            setTimeout(() => {
+                bus.off('step-result', followUp);
+                let siteName;
+                try { siteName = new URL(url.startsWith('http') ? url : `https://${url}`).hostname.replace('www.', ''); } catch { siteName = url; }
+                bus.emit('agent:chat-response', {
+                    goal,
+                    response: `✅ **${siteName}** has been opened.\n\nWhat would you like me to do here? I can search, click, extract info, fill a form, or run any task on this page.`,
+                });
+                bus.emit('agent:status', { message: 'Ready', status: 'idle' });
+            }, 8000);
+
             return;
         }
 
-        // Non-navigate quick action (click, extract) — use the autonomous loop for reliability
-        // but with a single-step goal, it will plan 1-2 steps and be fast
+        // Non-navigate quick action — delegate to autonomous loop
         console.log('[WorkflowEngine] QUICK_ACTION without URL — delegating to autonomous loop');
         return this._handleLongHorizon(goal, classification);
     }
@@ -183,6 +254,34 @@ class WorkflowEngine {
             }
         } catch (err) {
             console.error('[WorkflowEngine] Autonomous runtime failed:', err.message);
+            bus.emit('agent:error', { error: err.message });
+            UIFeedback.emit('FAILED', err.message);
+        }
+    }
+
+    /**
+     * DEEP mode: Browse + Summarize.
+     * Runs the full autonomous loop then runs one LLM pass over all collected
+     * page data to produce a structured, readable answer in the chat panel.
+     * Best for: "find the best X", "compare Y and Z", "research topic T".
+     */
+    async _handleDeep(goal, classification) {
+        UIFeedback.emit('PLANNING');
+
+        const page = browserManager.getActivePage();
+        if (!page) {
+            bus.emit('agent:error', { error: 'No browser tab available. Open a tab first.' });
+            UIFeedback.emit('FAILED', 'No browser tab');
+            return;
+        }
+
+        try {
+            const { success, result } = await AgentRuntime.start(page, goal, { deepSummary: true });
+            if (!success) {
+                bus.emit('agent:error', { error: result?.error || 'Deep research task failed' });
+            }
+        } catch (err) {
+            console.error('[WorkflowEngine] Deep runtime failed:', err.message);
             bus.emit('agent:error', { error: err.message });
             UIFeedback.emit('FAILED', err.message);
         }

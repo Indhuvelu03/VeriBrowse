@@ -22,6 +22,8 @@ import * as LocalSelector from './LocalSelectorService.js';
 import bus from '../EventBus.js';
 import UIFeedback from '../UIFeedback.js';
 import compactor from '../ContextCompactor.js';
+import * as CreditGuard from '../CreditGuard.js';
+import { DEEP_SUMMARY_PROMPT } from '../../constants.js';
 
 // ─── Runtime State ──────────────────────────────────────────────────────
 let currentAbort = null;    // AbortController for the active task
@@ -42,9 +44,12 @@ function emitStatus(message, status = 'idle') {
  *
  * @param {import('playwright').Page} page - The Playwright page to automate
  * @param {string} goal - The user's high-level task description
+ * @param {object} [options] - Optional flags
+ * @param {boolean} [options.deepSummary] - If true, run an LLM summarization pass after completion
  * @returns {Promise<{ success: boolean, result: object }>}
  */
-export async function start(page, goal) {
+export async function start(page, goal, options = {}) {
+    const { deepSummary = false } = options;
     if (currentState !== States.IDLE && currentState !== States.DONE && currentState !== States.ABORTED) {
         throw new Error(`[AgentRuntime] Cannot start — already running (state: ${currentState})`);
     }
@@ -77,6 +82,45 @@ export async function start(page, goal) {
 
         emitStatus('Ready', 'idle');
         currentState = result.state || States.DONE;
+
+        // ── Deep Summary: synthesize all findings into a chat answer ──
+        if (deepSummary && result.success) {
+            try {
+                emitStatus('Summarizing findings…', 'thinking');
+                console.log('[AgentRuntime] Running deep summary for:', goal);
+
+                // Collect extracted content from step results
+                const extractedTexts = (result.steps || [])
+                    .filter(s => s._success && s.result && typeof s.result === 'string' && s.result.length > 40)
+                    .map(s => s.result)
+                    .join('\n\n');
+
+                // Collect page summaries from compactor
+                const compactContext = compactor.getCompactContext();
+                const pageSummaries = compactContext?.pageSummaries
+                    ? compactContext.pageSummaries.map(p => `[${p.title || p.url}]\n${p.text}`).join('\n\n')
+                    : '';
+
+                const researchData = [extractedTexts, pageSummaries].filter(Boolean).join('\n\n---\n\n');
+
+                if (researchData.trim().length > 100) {
+                    const summaryPrompt = `${DEEP_SUMMARY_PROMPT}\n\n## USER GOAL\n${goal}\n\n## RESEARCH DATA\n${researchData.substring(0, 8000)}`;
+                    const summary = await CreditGuard.generate(summaryPrompt);
+                    bus.emit('agent:chat-response', { goal, response: summary });
+                    console.log('[AgentRuntime] Deep summary emitted.');
+                } else {
+                    // Not enough data — emit what the DONE step returned
+                    const lastDoneResult = result.steps?.findLast?.(s => s.type === 'DONE' || s.action === 'DONE')?.result;
+                    if (lastDoneResult) {
+                        bus.emit('agent:chat-response', { goal, response: lastDoneResult });
+                    }
+                }
+                emitStatus('Ready', 'idle');
+            } catch (summaryErr) {
+                console.warn('[AgentRuntime] Deep summary failed:', summaryErr.message);
+                emitStatus('Ready', 'idle');
+            }
+        }
 
         // Notify renderer
         const browserManager = (await import('../BrowserManager.js')).default;

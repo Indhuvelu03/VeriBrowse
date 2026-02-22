@@ -3,6 +3,7 @@ import bus from '../core/EventBus.js';
 import * as AgentRuntime from '../core/agent/AgentRuntime.js';
 import browserManager from '../core/BrowserManager.js';
 import * as IPCGuard from '../core/IPCGuard.js';
+import { generate } from '../services/LLMService.js';
 
 /**
  * AgentHandlers.js
@@ -113,4 +114,20 @@ export function registerAgentHandlers() {
             ipcGuard: IPCGuard.getStatus(),
         };
     });
-}
+    // ── agent:generate-title ────────────────────────────────────────────
+    // Generates a short contextual session title from the first exchange.
+    ipcMain.handle('agent:generate-title', async (event, { userMsg, agentMsg }) => {
+        try {
+            const prompt = `Given this conversation exchange, write a short session title (max 6 words, no quotes, no punctuation at end) that captures what this conversation is about:
+
+User: ${userMsg.slice(0, 300)}
+Assistant: ${agentMsg.slice(0, 300)}
+
+Title:`;
+            const raw = await generate(prompt, { maxTokens: 20, temperature: 0.3 });
+            return raw.trim().replace(/^["']|["']$/g, '').replace(/\.$/, '').slice(0, 60);
+        } catch (err) {
+            console.warn('[agent:generate-title] LLM failed, using fallback:', err.message);
+            return null; // renderer falls back to truncated user message
+        }
+    });}
