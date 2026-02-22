@@ -1,35 +1,106 @@
 'use client';
 
-import React, { useState } from 'react';
-import { AnimatePresence } from 'framer-motion';
-import { Splash } from '../components/Splash';
-import BrowserLayer from '../components/layers/BrowserLayer';
-import ChatLayer from '../components/layers/ChatLayer';
-import UILayer from '../components/layers/UILayer';
+import React, { useState, useEffect } from 'react';
+import { useUIStore } from '../store/uiStore';
+import { useTabStore } from '../store/tabStore';
+import { useWorkflowStore } from '../store/workflowStore';
+import { clsx } from 'clsx';
+import useIPCListeners from '../hooks/useIPCListeners'; // Using existing hook but will update it to new stores
 
-export default function HomePage() {
-    const [loading, setLoading] = useState(true);
+// Shell Components
+import WindowControls from '../components/shell/WindowControls';
+import Siderail from '../components/shell/Siderail';
+
+// Browser Components
+import Topbar from '../components/browser/Topbar';
+import Tabs from '../components/browser/Tabs';
+import BrowserLayer from '../components/browser/BrowserLayer';
+
+// Agent Components
+import AgentPanel from '../components/agent/AgentPanel';
+
+// Overlay Pages
+import HomePage from '../components/pages/HomePage';
+import HistoryPage from '../components/pages/HistoryPage';
+import DownloadsPage from '../components/pages/DownloadsPage';
+import SettingsPage from '../components/pages/SettingsPage';
+
+// Utilities
+import ToastNotifications from '../components/ToastNotifications';
+import { AnimatePresence, motion } from 'framer-motion';
+
+export default function MainLayout() {
+    const { currentPage, agentPanelOpen, activeView } = useUIStore();
+    const { activeTabId } = useTabStore();
+
+    // Wire IPC listeners
+    useIPCListeners();
 
     return (
-        <>
-            <AnimatePresence mode="wait">
-                {loading && <Splash onComplete={() => setLoading(false)} />}
-            </AnimatePresence>
+        <div className="flex h-screen w-screen bg-obsidian overflow-hidden select-none relative">
 
-            {!loading && (
-                <main className="relative w-screen h-screen overflow-hidden bg-obsidian text-white font-sans antialiased selection:bg-blue-500/30">
+            {/* 1. Side Navigation Rail (Always left) */}
+            <Siderail />
 
-                    {/* Layer 1: Browser (Bottom) */}
-                    <BrowserLayer />
+            {/* 2. Main Workspace (Base Layer) */}
+            <div className="flex-1 flex flex-col relative h-full overflow-hidden bg-obsidian">
+                {/* Global Drag Handle - Restricted center area */}
+                <div className="absolute top-0 left-64 right-[400px] h-10 drag-region z-[200] pointer-events-auto" />
 
-                    {/* Layer 2: Chat Overlay (Middle) */}
-                    <ChatLayer />
+                {/* Top Headers - Navigation Area */}
+                <div className="flex flex-col flex-shrink-0 pt-10">
+                    <Topbar />
+                    <Tabs />
+                </div>
 
-                    {/* Layer 3: UI Controls (Top) */}
-                    <UILayer />
+                {/* Shared Viewport Area */}
+                <div className="flex-1 relative flex overflow-hidden">
+                    {/* Main Content Area */}
+                    <div className="absolute inset-0 z-0">
+                        {/* The Page Layer */}
+                        <AnimatePresence mode="wait">
+                            {(activeView === 'home' || !activeTabId) && (
+                                <motion.div
+                                    key="home-page"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    className="absolute inset-0 z-10"
+                                >
+                                    <HomePage />
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
 
-                </main>
-            )}
-        </>
+                        {/* The Browser Viewport */}
+                        <BrowserLayer />
+
+                        {/* Overlays */}
+                        <AnimatePresence>
+                            {currentPage === 'history' && <HistoryPage key="history" />}
+                            {currentPage === 'downloads' && <DownloadsPage key="downloads" />}
+                            {currentPage === 'settings' && <SettingsPage key="settings" />}
+                        </AnimatePresence>
+                    </div>
+
+                    {/* 3. Agent Panel (Overlay Layer) */}
+                    <div className={clsx(
+                        "absolute inset-y-0 right-0 z-50 transition-transform duration-300 ease-in-out",
+                        agentPanelOpen ? "translate-x-0" : "translate-x-full"
+                    )}>
+                        <AgentPanel />
+                    </div>
+                </div>
+            </div>
+
+            {/* 4. Global Window Controls (Topmost Layer) */}
+            <div className="absolute top-0 right-0 h-10 w-48 z-[1000] pointer-events-auto no-drag flex justify-end">
+                <WindowControls />
+            </div>
+
+            {/* 5. Utility Layers */}
+            <ToastNotifications />
+
+        </div>
     );
 }

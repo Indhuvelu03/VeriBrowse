@@ -2,50 +2,83 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer utilities {
-  .glass {
-    background-color: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(24px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
+:root {
+  --siderail-width: 48px;
+  --topbar-height: 52px;
+  --drag-region-height: 40px;
+  --agent-panel-width: 360px;
+}
+
+@layer base {
+  body {
+    @apply bg-obsidian text-gray-200 antialiased overflow-hidden select-none h-screen w-screen;
+    font-family: 'Inter', system-ui, sans-serif;
   }
 
-  .glass-metallic {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
-    backdrop-filter: blur(40px);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  ::selection {
+    @apply bg-white/20;
+  }
+}
+
+@layer components {
+  .drag-region {
+    -webkit-app-region: drag;
   }
 
-  .premium-glass {
-    background: rgba(10, 10, 10, 0.4);
-    backdrop-filter: blur(50px) saturate(180%);
-    border-left: 1px solid rgba(255, 255, 255, 0.08);
+  .no-drag {
+    -webkit-app-region: no-drag;
   }
 
-  .chat-bubble-ai {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  .glass-panel {
+    @apply bg-white/[0.03] backdrop-blur-2xl border border-white/10 shadow-[0_8px_32px_0_rgba(0, 0, 0, 0.8)];
   }
 
-  .chat-bubble-user {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.05));
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  .interactive-glass {
+    @apply hover:bg-white/5 active:scale-[0.98] transition-all duration-150 cursor-pointer;
   }
 
   .text-metallic {
-    @apply bg-clip-text text-transparent bg-gradient-to-b from-gray-100 to-gray-400;
+    @apply bg-clip-text text-transparent bg-gradient-to-b from-gray-100 to-gray-500;
   }
 
-  .animate-spin-slow {
-    animation: spin 8s linear infinite;
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
   }
 
-  .animate-float {
-    animation: float 3s ease-in-out infinite;
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
   }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+  }
+}
+
+@layer utilities {
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+}
+
+/* Animations */
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
 }
 
 @keyframes float {
@@ -60,32 +93,25 @@
   }
 }
 
-html,
-body {
-  padding: 0;
-  margin: 0;
-  overflow: hidden;
-  height: 100%;
-  width: 100%;
+.animate-float {
+  animation: float 3s ease-in-out infinite;
 }
 
-body {
-  @apply bg-obsidian text-gray-200 antialiased;
+/* Page Transitions */
+.page-fade-enter {
+  opacity: 0;
 }
 
-::-webkit-scrollbar {
-  width: 6px;
+.page-fade-enter-active {
+  opacity: 1;
+  transition: opacity 200ms ease-out;
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
+.page-fade-exit {
+  opacity: 1;
 }
 
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+.page-fade-exit-active {
+  opacity: 0;
+  transition: opacity 200ms ease-out;
 }

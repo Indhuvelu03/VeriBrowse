@@ -1,260 +1,276 @@
-import { app, BrowserWindow, ipcMain, session, BrowserView } from 'electron';
-
-// Height of the renderer topbar/titlebar — BrowserView sits below this
-const TOPBAR_HEIGHT = 60;
-import path from 'path';
-import fs from 'fs';
-import dotenv from 'dotenv';
+import { app, BrowserWindow, BrowserView, ipcMain, screen, shell } from 'electron';
 import serve from 'electron-serve';
+import { chromium } from 'playwright';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import Store from 'electron-store';
 
-// Services
-import BrowserService from './services/BrowserService.js';
-import DatabaseService from './services/DatabaseService.js';
+// ESM __dirname fix
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// Handlers
+// Global Error Catching
+process.on('uncaughtException', (err) => {
+  console.error('[Main] Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Main] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Core & Services
+import bus from './core/EventBus.js';
+import * as CreditGuard from './core/CreditGuard.js';
+import * as SupabaseService from './services/SupabaseService.js';
+import * as SessionService from './services/SessionService.js';
+
+// Agents & Engine (Import for initialization)
+import './core/WorkflowEngine.js';
+import './agents/BrowserAgent.js';
+import './agents/MemoryAgent.js';
+import './agents/SummaryAgent.js';
 import { registerAgentHandlers } from './ipc/AgentHandlers.js';
-import { registerBrowserHandlers } from './ipc/browserHandlers.js';
-import { registerHistoryHandlers } from './ipc/historyHandlers.js';
-import { registerDownloadHandlers } from './ipc/downloadHandlers.js';
-import { registerWindowHandlers } from './ipc/windowHandlers.js';
+import { registerWindowHandlers } from './ipc/WindowHandlers.js';
+import { registerBrowserHandlers } from './ipc/BrowserHandlers.js';
+import { registerServiceHandlers } from './ipc/ServiceHandlers.js';
+import * as AgentRuntime from './core/agent/AgentRuntime.js';
 
-// Environment Setup
-const isDev = process.env.NODE_ENV === 'development';
-const envLocalPath = path.join(process.cwd(), '.env.local');
-if (fs.existsSync(envLocalPath)) {
-  dotenv.config({ path: envLocalPath });
-  console.log('[Main] Loaded .env.local');
+const isProd = process.env.NODE_ENV === 'production';
+const store = new Store();
+
+if (isProd) {
+  serve({ directory: 'app' });
 } else {
-  dotenv.config();
+  app.setPath('userData', `${app.getPath('userData')} (development)`);
 }
 
-// Global references
-let mainWindow = null;
-let browserView = null;
-let browserService = null;
-let databaseService = null;
+// ── Bug #8 Fix: Daily credit reset ─────────────────────────────────────────
+// CreditGuard persists callsUsed in electron-store but never resets it.
+// On every startup, check if we crossed a calendar day boundary and reset.
+function checkDailyCreditReset() {
+  const today = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+  const lastReset = store.get('credits.lastResetDate', '');
+  if (lastReset !== today) {
+    console.log(`[Main] New day detected (${lastReset} → ${today}). Resetting credit counter.`);
+    store.set('credits.callsUsed', 0);
+    store.set('credits.lastResetDate', today);
+    // CreditGuard reads from store so updating the store is enough.
+    // Emit updated stats to renderer once it connects.
+  }
+}
+checkDailyCreditReset();
+// ────────────────────────────────────────────────────────────────────────────
 
-// Serve production build
-const loadURL = serve({ directory: 'app' }); // Nextron default
+
+global.userTabsMap = new Map();
+global.shadowTabsMap = new Map();
+global.playwrightBrowser = null;
+global.playwrightContext = null;
+
+let mainWindow;
 
 /**
- * Create main browser window
+ * ensureBrowserView(tabId)
+ *
+ * Guarantees the tab has an Electron BrowserView attached to mainWindow.
+ * If one already exists it's returned immediately.
+ * This is the bridge between headless Playwright (logic) and the visible
+ * Electron window (pixels). Without a BrowserView the viewport is black.
+ *
+ * Bounds: sidebar (48px) + top chrome (approx 108px).
+ * The renderer fine-tunes these via the 'browser:resize-viewport' IPC.
  */
-function createWindow() {
-  console.log('[Main] Creating main window...');
+function ensureBrowserView(tabId) {
+  const entry = global.userTabsMap.get(tabId);
+  if (!entry) return null;
+  if (entry.electronBrowserView) return entry.electronBrowserView; // already exists
 
-  mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1200,
-    minHeight: 700,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#0a0a0a',
+  const view = new BrowserView({
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js'),
-      webSecurity: true,
     },
-    show: false
   });
 
-  // Initialize BrowserView for the native browser area
-  browserView = new BrowserView({
+  mainWindow.addBrowserView(view);
+
+  // IMPORTANT: Start hidden (0×0) so it never blocks the home page or agent panel.
+  // The renderer's BrowserLayer sends 'browser:resize-viewport' with real bounds
+  // only when hasUrl=true — that's what makes the page visible.
+  view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+
+  global.userTabsMap.set(tabId, { ...entry, electronBrowserView: view });
+  console.log(`[Main] BrowserView created (hidden) for tab ${tabId}`);
+  return view;
+}
+// Expose globally so tools (navigate.js etc.) can call it without importing background.js
+global.ensureBrowserView = ensureBrowserView;
+
+
+async function createWindow() {
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+
+  console.log('[Main] Creating BrowserWindow...');
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 1000,
+    minHeight: 600,
+    show: true, // Show immediately for debugging
+    titleBarStyle: 'hidden',
+    backgroundColor: '#050505',
     webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
-      // Attempt to hide "AutomationControlled" from the renderer chrome
-      enableRemoteModule: false,
-    }
+      sandbox: false
+    },
+  });
+  global.mainWindow = mainWindow; // expose for tools that need to IPC to the renderer
+
+  mainWindow.on('ready-to-show', () => {
+    console.log('[Main] Window ready-to-show');
+    mainWindow.show();
   });
 
-  // Apply "stealth" user agent and remove automation hints
-  const viewSession = browserView.webContents.session;
-  viewSession.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');
+  // --- IPC HANDLERS ---
+  // --- IPC HANDLERS ---
+  registerWindowHandlers();
+  registerBrowserHandlers();
+  registerServiceHandlers();
+  registerAgentHandlers();
 
-  // Fellou-style Navigation Guard
-  // 1. Intercept new window requests (target="_blank") and redirect to same view
-  browserView.webContents.setWindowOpenHandler(({ url }) => {
-    console.log('[Main] Blocking popup/newtab and redirecting to same view:', url);
-    browserView.webContents.loadURL(url);
+  // --- EVENT BUS BRIDGE ---
+  const bridge = (event, channel = null) => {
+    bus.on(event, (data) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(channel || event, data);
+      }
+    });
+  };
+
+  bridge('workflow:step-updated');
+  bridge('workflow:completed');
+  bridge('workflow:paused');
+  bridge('workflow:resumed');  // FIX 1: So renderer can call setResumed() in workflowStore
+  bridge('agent:status');
+  bridge('agent:summary-ready');
+  bridge('agent:chat-response');
+  bridge('agent:error');
+  bridge('agent:execution-step');  // autonomous loop live step updates
+  bridge('agent:autonomous-done');
+  bridge('agent:state-change');    // AutonomousLoop state machine transitions
+  bridge('credit:updated');
+  bridge('credit:warning');
+  bridge('credit:critical');
+  bridge('browser:user-tab-created');
+  bridge('browser:user-tab-updated');  // Bug #4 was already fixed in navigate.js; bridge ensures it propagates
+  bridge('browser:user-tab-switched');
+  bridge('browser:user-tab-closed');
+  bridge('browser:shadow-tab-created');
+
+
+  // Load UI first
+  if (isProd) {
+    await mainWindow.loadURL('app://./home');
+  } else {
+    // Robust port detection for nextron
+    let port = 8888;
+    const portArgIndex = process.argv.indexOf('--port');
+    if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
+      port = process.argv[portArgIndex + 1];
+    } else if (process.argv[2] && !isNaN(process.argv[2])) {
+      port = process.argv[2];
+    }
+
+    console.log(`[Main] Loading renderer at http://localhost:${port}`);
+    try {
+      await mainWindow.loadURL(`http://localhost:${port}/`);
+    } catch (err) {
+      console.error('[Main] Failed to load URL:', err);
+      // Fallback: try to show the window anyway to show the error
+      mainWindow.show();
+    }
+    mainWindow.webContents.openDevTools();
+  }
+
+  // Backup show if ready-to-show fails
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      console.log('[Main] Forcing window show via timeout');
+      mainWindow.show();
+    }
+  }, 5000);
+
+  // Initialize Playwright in background (don't block UI)
+  initializePlaywright().catch(err => {
+    console.error('[Background] Playwright initialization failed:', err);
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
     return { action: 'deny' };
   });
-
-  // 2. Override window.open inside the page and hide ads/popups
-  browserView.webContents.on('dom-ready', () => {
-    browserView.webContents.executeJavaScript(`
-      // Convert popups into same-page navigations
-      window.open = (url) => {
-        window.location.href = url;
-        return window;
-      };
-      
-      // Stealth: Remove webdriver flag
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-
-      // Action Guard: Block ad overlays that steal agent clicks
-      const style = document.createElement('style');
-      style.textContent = \`
-        .ad, .social-share, #popup-container, .modal-backdrop { 
-          pointer-events: none !important; 
-          visibility: hidden !important; 
-          display: none !important; 
-        }
-      \`;
-      document.head.appendChild(style);
-    `).catch(() => { });
-  });
-
-  // Attach BrowserView to window
-  mainWindow.setBrowserView(browserView);
-
-  // Let Electron auto-resize the BrowserView width/height when window resizes
-  browserView.setAutoResize({ width: true, height: true });
-
-  /**
-   * Calculates and applies correct BrowserView bounds.
-   * BrowserView sits below the TOPBAR_HEIGHT px renderer chrome.
-   */
-  function applyBrowserViewBounds() {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    const { width, height } = mainWindow.getContentBounds();
-    const bounds = {
-      x: 0,
-      y: TOPBAR_HEIGHT,
-      width: Math.max(width, 0),
-      height: Math.max(height - TOPBAR_HEIGHT, 0),
-    };
-    console.log('[Main] BrowserView bounds →', bounds);
-    browserView.setBounds(bounds);
-  }
-
-  // Load URL
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:8888');
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
-  } else {
-    mainWindow.loadURL('app://-');
-  }
-
-  mainWindow.once('ready-to-show', () => {
-    console.log('[Main] Window ready to show');
-    mainWindow.show();
-    // Apply bounds as soon as the window is visible
-    applyBrowserViewBounds();
-  });
-
-  // Re-apply on every window resize (catches maximize/restore/drag)
-  mainWindow.on('resize', applyBrowserViewBounds);
-  mainWindow.on('maximize', applyBrowserViewBounds);
-  mainWindow.on('unmaximize', applyBrowserViewBounds);
-  mainWindow.on('restore', applyBrowserViewBounds);
-
-  mainWindow.on('closed', () => {
-    console.log('[Main] Window closed');
-    mainWindow = null;
-  });
-
-  return mainWindow;
 }
 
-/**
- * Initialize all services
- */
-async function initializeServices() {
-  console.log('[Main] Initializing services...');
-
+async function initializePlaywright() {
   try {
-    databaseService = new DatabaseService();
+    global.playwrightBrowser = await chromium.launch({
+      headless: true,
+      args: ['--disable-blink-features=AutomationControlled', '--no-sandbox']
+    });
 
-    // Initialize hybrid browser service
-    browserService = new BrowserService(mainWindow, browserView);
+    global.playwrightContext = await global.playwrightBrowser.newContext({
+      viewport: { width: 1280, height: 800 },
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    });
+    console.log('[Background] Playwright initialized successfully');
 
-    return true;
-  } catch (error) {
-    console.error('[Main] Service initialization error:', error);
-    return false;
+    // Open the initial user tab so BrowserAgent always has a Playwright page to work with.
+    // NOTE: We do NOT pre-create a BrowserView here. BrowserViews are created on-demand
+    // in the browser:navigate / browser:resize-viewport IPC handlers (via ensureBrowserView).
+    // Pre-creating with visible bounds would cover the home page and block the chat input.
+    const initialPage = await global.playwrightContext.newPage();
+    global.userTabsMap.set('user-1', {
+      playwrightPage: initialPage,
+      url: 'about:blank',
+      title: 'New Tab',
+      type: 'user',
+    });
+    global.activeTabId = 'user-1';
+
+    // Tell the renderer about the initial tab so tabStore can register it.
+    // Delay 2s to ensure the renderer's useIPCListeners hook has mounted.
+    // Without this, agent navigation for 'user-1' updates a tab that doesn't
+    // exist in the renderer store, so the BrowserView never gets shown.
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('browser:user-tab-created', {
+          id: 'user-1',
+          url: 'about:blank',
+          title: 'New Tab',
+          favicon: null,
+          isLoading: false,
+        });
+        console.log('[Background] Announced user-1 tab to renderer');
+      }
+    }, 2000);
+
+    console.log('[Background] Initial user tab created: user-1 (no BrowserView yet — created on first navigate)');
+
+  } catch (err) {
+    console.error('[Background] Failed to launch Playwright:', err.message);
+    throw err;
   }
 }
 
-/**
- * Register all IPC handlers
- */
-function registerAllHandlers() {
-  console.log('[Main] Registering IPC handlers...');
+app.whenReady().then(createWindow);
 
-  // Agent handlers (AI thinking, tool orchestration)
-  registerAgentHandlers(mainWindow, browserView);
-
-  // Browser handlers (navigation, tabs, resizing)
-  registerBrowserHandlers(browserService, mainWindow);
-
-  // History handlers (database storage)
-  registerHistoryHandlers(databaseService);
-
-  // Download handlers
-  registerDownloadHandlers();
-
-  // Window handlers (minimize/maximize/close)
-  registerWindowHandlers(mainWindow);
-}
-
-/**
- * Configure session security and defaults
- */
-function configureSession() {
-  session.defaultSession.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-  );
-  console.log('[Main] Session configured');
-}
-
-/**
- * App ready handler
- */
-app.whenReady().then(async () => {
-  console.log('[Main] App ready');
-
-  configureSession();
-  createWindow();
-
-  const servicesReady = await initializeServices();
-  if (servicesReady) {
-    registerAllHandlers();
-  }
-
-  console.log('[Main] Application fully initialized');
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
-  });
+app.on('window-all-closed', async () => {
+  if (global.playwrightBrowser) await global.playwrightBrowser.close();
+  if (process.platform !== 'darwin') app.quit();
 });
 
-/**
- * Cleanup on exit
- */
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
-
-app.on('before-quit', async (event) => {
-  console.log('[Main] Cleaning up before quit...');
-
-  // Note: Playwright cleanup is sync or async. 
-  // We'll try to shut down gracefully.
-  if (browserService) {
-    await browserService.close();
-  }
-
-  if (databaseService) {
-    databaseService.close();
-  }
-});
-
-console.log('[Main] Background logic loaded.');

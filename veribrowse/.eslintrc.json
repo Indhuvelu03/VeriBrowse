@@ -4,7 +4,15 @@
         "prettier"
     ],
     "rules": {
+        "no-unused-vars": [
+            "warn",
+            {
+                "argsIgnorePattern": "^_"
+            }
+        ],
+        "no-console": "off",
         "react/no-unescaped-entities": "off",
+        "react-hooks/rules-of-hooks": "error",
         "react-hooks/exhaustive-deps": "warn"
     }
 }

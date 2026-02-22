@@ -1,6 +1,6 @@
-appId: com.example.nextron
-productName: My Nextron App
-copyright: Copyright © 2018 Yoshihide Shiono
+appId: com.veribrowse.app
+productName: VeriBrowse
+copyright: Copyright © 2026 VeriBrowse Team
 directories:
   output: dist
   buildResources: resources
@@ -9,4 +9,15 @@ files:
     filter:
       - package.json
       - app
+      - resources
+  - from: main/preload.js
+    to: app/preload.js
 publish: null
+win:
+  target: nsis
+  icon: resources/icon.ico
+mac:
+  target: dmg
+  icon: resources/icon.icns
+linux:
+  target: AppImage

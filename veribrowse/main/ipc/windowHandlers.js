@@ -1,25 +1,27 @@
-import { ipcMain } from 'electron';
+import { ipcMain, BrowserWindow } from 'electron';
 
 /**
- * Window Handlers
- * Manages frame controls (minimize, maximize, close).
+ * windowHandlers.js
+ * 
+ * Handles window control events like minimize, maximize, and close.
  */
-export function registerWindowHandlers(mainWindow) {
-    console.log('[WindowHandlers] Registering...');
 
-    ipcMain.on('window:minimize', () => {
-        mainWindow?.minimize();
+export function registerWindowHandlers() {
+    ipcMain.on('window:minimize', (event) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) win.minimize();
     });
 
-    ipcMain.on('window:maximize', () => {
-        if (mainWindow?.isMaximized()) {
-            mainWindow.unmaximize();
-        } else {
-            mainWindow?.maximize();
+    ipcMain.on('window:maximize', (event) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) {
+            if (win.isMaximized()) win.unmaximize();
+            else win.maximize();
         }
     });
 
-    ipcMain.on('window:close', () => {
-        mainWindow?.close();
+    ipcMain.on('window:close', (event) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) win.close();
     });
 }

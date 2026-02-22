@@ -1,44 +1,62 @@
 import { create } from 'zustand';
 
 /**
- * useUIStore - Mode-based UI State Machine
- * Inspired by Fellou.ai / Arc architecture.
+ * uiStore
  * 
- * sidebarMode: 'chat' | 'newtab' | 'hidden'
- * mainView: 'home' | 'browser'
+ * Manages the global layout and navigation state for the Fellou-inspired redesign.
  */
+
 export const useUIStore = create((set, get) => ({
-  sidebarMode: 'hidden',
-  mainView: 'home',
+  // Navigation & Views
+  currentPage: 'home', // 'home' | 'history' | 'downloads' | 'settings'
+  activeView: 'home', // 'home' | 'browser'
 
-  setSidebarMode: (mode) => set({ sidebarMode: mode }),
-  setMainView: (view) => set({ mainView: view }),
+  // Panel States
+  agentPanelOpen: false,
 
-  // The "Exact Fix" logic requested by user
-  handleClose: () => {
-    const { sidebarMode } = get();
-    if (sidebarMode === 'chat') {
-      set({ sidebarMode: 'newtab' });
+  // Toasts
+  toasts: [],
+
+  // Actions
+  setCurrentPage: (page) => {
+    if (page !== 'home') {
+      // Close agent panel when opening an overlay page
+      set({ currentPage: page, agentPanelOpen: false });
     } else {
-      set({ sidebarMode: 'hidden' });
+      set({ currentPage: page });
     }
   },
 
-  // State triggers
-  openChat: () => set({ sidebarMode: 'chat' }),
-  openHome: () => set({ mainView: 'home', sidebarMode: 'hidden' }),
+  setActiveView: (view) => set({ activeView: view }),
 
-  toggleChat: () => {
-    const { sidebarMode } = get();
-    if (sidebarMode === 'chat') {
-      set({ sidebarMode: 'hidden' });
-    } else {
-      set({ sidebarMode: 'chat' });
-    }
+  toggleAgentPanel: () => set((state) => ({
+    agentPanelOpen: !state.agentPanelOpen,
+    // Close any overlay when opening agent panel
+    currentPage: !state.agentPanelOpen ? 'home' : state.currentPage,
+  })),
+
+  openAgentPanel: () => set({ agentPanelOpen: true, currentPage: 'home' }),
+
+  closeAgentPanel: () => set({ agentPanelOpen: false }),
+
+  // Helper to clear overlays
+  closeOverlays: () => set({ currentPage: 'home' }),
+
+  // Notifications
+  addToast: (message, type = 'info') => {
+    const id = Math.random().toString(36).substring(7);
+    set((state) => ({
+      toasts: [...state.toasts, { id, message, type }]
+    }));
+
+    setTimeout(() => {
+      set((state) => ({
+        toasts: state.toasts.filter((t) => t.id !== id)
+      }));
+    }, 5000);
   },
 
-  // Legacy compatibility for components using this
-  setShowHome: (show) => set({ mainView: show ? 'home' : 'browser' }),
-  get chatOpen() { return get().sidebarMode === 'chat'; },
-  get showHome() { return get().mainView === 'home'; }
+  removeToast: (id) => set((state) => ({
+    toasts: state.toasts.filter((t) => t.id !== id)
+  }))
 }));
