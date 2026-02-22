@@ -32,10 +32,13 @@
 import getDOMSnapshot from '../../tools/browser/getDOMSnapshot.js';
 import executeAction from '../../tools/browser/executeAction.js';
 import verifyAction from '../../verification/verifyAction.js';
+import { markPage, unmarkPage } from '../../tools/browser/visualGrounding.js';
 import * as AgentReasoner from './AgentReasoner.js';
 import * as LocalSelector from './LocalSelectorService.js';
 import * as SkillMemory from './SkillMemory.js';
 import bus from '../EventBus.js';
+import compactor from '../ContextCompactor.js';
+import UIFeedback from '../UIFeedback.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────
 const MAX_PLAN_STEPS = 30;   // max steps in a plan
@@ -73,10 +76,7 @@ export const States = Object.freeze({
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 function emitStep(payload) {
-    bus.emit('agent:execution-step', payload);
-    if (global.mainWindow && !global.mainWindow.isDestroyed()) {
-        global.mainWindow.webContents.send('agent:execution-step', payload);
-    }
+    UIFeedback.emitStep(payload);
 }
 
 function checkAbort(signal) {
@@ -106,14 +106,32 @@ function getDomain(url) {
 }
 
 /**
+ * Take a screenshot with visual grounding labels.
+ */
+async function captureMarkedScreenshot(page) {
+    try {
+        const groundingMap = await markPage(page);
+        const screenshot = await page.screenshot({ encoding: 'base64' });
+        await unmarkPage(page);
+        return { screenshot, groundingMap };
+    } catch (e) {
+        console.warn('[AutonomousLoop] Visual grounding failed:', e.message);
+        await unmarkPage(page).catch(() => { });
+        const screenshot = await page.screenshot({ encoding: 'base64' }).catch(() => null);
+        return { screenshot, groundingMap: null };
+    }
+}
+
+/**
  * Convert a plan step into an ACTION_SCHEMA-compatible action object
  * with a resolved selector from LocalSelectorService.
  */
-async function resolveStepToAction(step, snapshot, screenshot) {
+async function resolveStepToAction(step, snapshot, screenshot, groundingMap = null) {
     // Steps that don't need selector resolution
     if (step.type === 'NAVIGATE') {
         return { type: 'NAVIGATE', url: step.url, reasoning: step.description || 'Navigate' };
     }
+    // ... (rest same, skipping to selector logic) ...
     if (step.type === 'WAIT') {
         return { type: 'WAIT', amount: step.amount || 2000, reasoning: step.description || 'Wait' };
     }
@@ -130,11 +148,28 @@ async function resolveStepToAction(step, snapshot, screenshot) {
         return { type: 'PRESS_ENTER', reasoning: step.description || 'Press enter' };
     }
 
+    // ── Visual Grounding Resolution ──
+    // If the step explicitly uses a numeric label from visual grounding (e.g. "[5]")
+    if (step.selector && /^\[\d+\]$/.test(step.selector) && groundingMap) {
+        const num = parseInt(step.selector.slice(1, -1));
+        const realSelector = groundingMap[num];
+        if (realSelector) {
+            console.log(`[AutonomousLoop] Grounding hit: Resolved [${num}] to ${realSelector}`);
+            return {
+                type: step.type,
+                selector: realSelector,
+                text: step.text || undefined,
+                reasoning: step.description || `${step.type} on [${num}]`,
+                _grounded: true
+            };
+        }
+    }
+
     // Steps that need selector resolution (CLICK, TYPE)
     const goalText = step.goalText || step.description || step.selector || '';
 
     // If the plan already includes a concrete selector, use it directly
-    if (step.selector && step.selector.startsWith('#') || step.selector?.startsWith('.') || step.selector?.startsWith('[')) {
+    if (step.selector && (step.selector.startsWith('#') || step.selector.startsWith('.') || step.selector.startsWith('['))) {
         const action = {
             type: step.type,
             selector: step.selector,
@@ -180,6 +215,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
     let state = States.IDLE;
     const executedSteps = [];       // history of executed actions
     let plan = [];                  // remaining steps to execute
+    let groundingMap = null;        // Mapping for current page's visual markers
     let replanCount = 0;
     let totalActions = 0;
     let llmCalls = 0;               // track LLM usage for monitoring
@@ -197,6 +233,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
         // ══════════════════════════════════════════════════════════════
         setState(States.PLANNING);
         checkAbort(signal);
+        UIFeedback.emit('PLANNING');
         emitStep({ thought: 'Planning task…', action: 'PLAN', status: 'running' });
 
         // Take initial snapshot
@@ -206,8 +243,17 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
         } catch (e) {
             snapshot = { url: page.url(), title: '', interactiveElements: [], inputs: [], buttons: [], links: [], overlays: [] };
         }
-        const screenshot = await page.screenshot({ encoding: 'base64' }).catch(() => null);
+        let screenshot = null;
         const domain = getDomain(snapshot.url || page.url());
+
+        // Initialize ContextCompactor for this task
+        compactor.startTask(goal);
+        compactor.addPageSummary(snapshot.url || page.url(), snapshot.title || '', snapshot.visibleText || '');
+
+        // Use Visual Grounding for the initial planning screenshot
+        const grounded = await captureMarkedScreenshot(page);
+        screenshot = grounded.screenshot;
+        groundingMap = grounded.groundingMap;
 
         // Try SkillMemory first (ZERO LLM calls)
         const cachedSkill = await SkillMemory.recall(domain, goal);
@@ -232,6 +278,10 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
             setState(States.ABORTED);
             return { success: false, state: States.ABORTED, steps: executedSteps, llmCalls };
         }
+
+        // Track total planned steps in compactor
+        compactor.taskProgress.totalPlannedSteps = plan.length;
+        compactor.setPhase('executing');
 
         // ══════════════════════════════════════════════════════════════
         // PHASE 2: EXECUTION (local — no LLM unless stuck)
@@ -290,7 +340,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
                 // Resolve plan step → concrete action
                 let action;
                 try {
-                    action = await resolveStepToAction(currentStep, snapshot, screenshotForStep);
+                    action = await resolveStepToAction(currentStep, snapshot, screenshotForStep, groundingMap);
                 } catch (e) {
                     console.warn(`[AutonomousLoop] Step resolution failed: ${e.message}`);
                     stepRetries++;
@@ -303,6 +353,10 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
                 }
 
                 const actionLabel = `${action.type} ${action.selector || action.url || action.text || ''}`.trim();
+
+                // Emit user-friendly status
+                UIFeedback.emitForAction(action);
+
                 emitStep({
                     thought: action.reasoning || currentStep.description,
                     action: actionLabel,
@@ -356,6 +410,13 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
                         totalSteps: plan.length,
                     });
                     executedSteps.push({ ...action, ...currentStep, _success: true, _verification: verification });
+
+                    // Track in ContextCompactor
+                    compactor.addAction(action, true);
+                    // Update page summary if URL changed
+                    if (afterSnapshot.url !== snapshot.url) {
+                        compactor.addPageSummary(afterSnapshot.url, afterSnapshot.title || '', afterSnapshot.visibleText || '');
+                    }
                 } else {
                     console.warn(`[AutonomousLoop] Verification failed for step ${stepIndex + 1}`);
                     emitStep({ thought: 'Action had no visible effect', action: actionLabel, status: 'warn', verification });
@@ -370,6 +431,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
 
                     stepRetries++;
                     executedSteps.push({ ...action, _failed: true, _error: 'No visible effect' });
+                    compactor.addAction(action, false, 'No visible effect');
                 }
 
                 // Handle overlays that appeared after action
@@ -389,10 +451,16 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
                     try {
                         snapshot = await getDOMSnapshot(page);
                     } catch { /* keep old */ }
-                    const replanScreenshot = await page.screenshot({ encoding: 'base64' }).catch(() => null);
+
+                    const replanGrounded = await captureMarkedScreenshot(page);
+                    const replanScreenshot = replanGrounded.screenshot;
+                    groundingMap = replanGrounded.groundingMap;
 
                     const stuckReason = `Step "${currentStep.description || currentStep.goalText || currentStep.type}" failed ${MAX_STEP_RETRIES} times.`;
                     const remainingPlan = plan.slice(stepIndex);
+
+                    // Set compactor phase and provide compact context to replan
+                    compactor.setPhase('replanning');
 
                     try {
                         const newPlan = await AgentReasoner.replan(goal, executedSteps, remainingPlan, stuckReason, snapshot, replanScreenshot);
@@ -413,7 +481,10 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
 
                     try {
                         snapshot = await getDOMSnapshot(page);
-                        const fbScreenshot = await page.screenshot({ encoding: 'base64' }).catch(() => null);
+                        const fbGrounded = await captureMarkedScreenshot(page);
+                        const fbScreenshot = fbGrounded.screenshot;
+                        groundingMap = fbGrounded.groundingMap;
+
                         const fallbackAction = await AgentReasoner.decideSingleAction(
                             goal,
                             snapshot,

@@ -19,11 +19,15 @@ import BrowserLayer from '../components/browser/BrowserLayer';
 // Agent Components
 import AgentPanel from '../components/agent/AgentPanel';
 
+// Error Boundary
+import ErrorBoundary from '../components/ErrorBoundary';
+
 // Overlay Pages
 import HomePage from '../components/pages/HomePage';
 import HistoryPage from '../components/pages/HistoryPage';
 import DownloadsPage from '../components/pages/DownloadsPage';
 import SettingsPage from '../components/pages/SettingsPage';
+import SkillLibraryPage from '../components/pages/SkillLibraryPage';
 
 // Utilities
 import ToastNotifications from '../components/ToastNotifications';
@@ -73,13 +77,16 @@ export default function MainLayout() {
                         </AnimatePresence>
 
                         {/* The Browser Viewport */}
-                        <BrowserLayer />
+                        <ErrorBoundary name="BrowserLayer">
+                            <BrowserLayer />
+                        </ErrorBoundary>
 
                         {/* Overlays */}
                         <AnimatePresence>
                             {currentPage === 'history' && <HistoryPage key="history" />}
                             {currentPage === 'downloads' && <DownloadsPage key="downloads" />}
                             {currentPage === 'settings' && <SettingsPage key="settings" />}
+                            {currentPage === 'skills' && <SkillLibraryPage key="skills" />}
                         </AnimatePresence>
                     </div>
 
@@ -88,7 +95,9 @@ export default function MainLayout() {
                         "absolute inset-y-0 right-0 z-50 transition-transform duration-300 ease-in-out",
                         agentPanelOpen ? "translate-x-0" : "translate-x-full"
                     )}>
-                        <AgentPanel />
+                        <ErrorBoundary name="AgentPanel">
+                            <AgentPanel />
+                        </ErrorBoundary>
                     </div>
                 </div>
             </div>

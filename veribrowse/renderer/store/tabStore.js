@@ -9,6 +9,7 @@ import { create } from 'zustand';
 
 export const useTabStore = create((set, get) => ({
     userTabs: [],
+    shadowTabs: [],
     activeTabId: null,
     canGoBack: false,
     canGoForward: false,
@@ -27,6 +28,24 @@ export const useTabStore = create((set, get) => ({
             activeTabId: state.activeTabId || tab.id,
         };
     }),
+
+    addShadowTab: (tab) => set((state) => {
+        const exists = state.shadowTabs.some(t => t.id === tab.id);
+        if (exists) {
+            return {
+                shadowTabs: state.shadowTabs.map(t => t.id === tab.id ? { ...t, ...tab } : t),
+            };
+        }
+        return { shadowTabs: [...state.shadowTabs, tab] };
+    }),
+
+    updateShadowTab: (tabId, updates) => set((state) => ({
+        shadowTabs: state.shadowTabs.map((t) => (t.id === tabId ? { ...t, ...updates } : t))
+    })),
+
+    removeShadowTab: (tabId) => set((state) => ({
+        shadowTabs: state.shadowTabs.filter((t) => t.id !== tabId)
+    })),
 
 
     updateTab: (tabId, updates) => {
@@ -71,14 +90,8 @@ export const useTabStore = create((set, get) => ({
     },
 
     // createNewTab: pure local operation.
-    // Adds a blank tab to the store and switches the view to 'home'.
-    // The BrowserView is hidden automatically because the new tab has no URL
-    // (BrowserLayer returns null + sends 0×0 bounds for tabs with about:blank).
-    // When the user types a URL in the omnibox and hits Enter, THEN a real
-    // Playwright page is navigated via the browser:navigate IPC.
     createNewTab: (url = 'about:blank') => {
-        const { v4: uuidv4 } = require('uuid') ?? { v4: () => Math.random().toString(36).slice(2) };
-        const tabId = `user-${Date.now().toString(36)}`;
+        const tabId = `user-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
         const newTab = {
             id: tabId,
             url,
@@ -98,38 +111,28 @@ export const useTabStore = create((set, get) => ({
         }
     },
 
-
-
     closeTab: (tabId) => {
         const state = get();
         const { userTabs, activeTabId, removeTab, createNewTab } = state;
 
-        // 1. Hide the BrowserView for the tab being closed so the page
-        //    doesn't remain visible after the tab strip entry is gone.
         if (window.electronAPI?.browser) {
             window.electronAPI.browser.hideViewport(tabId);
-            window.electronAPI.browser.closeTab(tabId); // tells main to destroy Playwright page
+            window.electronAPI.browser.closeTab(tabId);
         }
 
-        // 2. If this is the LAST tab, create a fresh blank one first so the
-        //    UI never ends up with zero tabs (avoids the whole bar disappearing).
         if (userTabs.length <= 1) {
-            createNewTab(); // adds a blank tab + switches to it
+            createNewTab();
             removeTab(tabId);
             return;
         }
 
-        // 3. Normal close — removeTab picks the previous tab as new active
         removeTab(tabId);
 
-        // 4. After state update, switch the BrowserView to the new active tab.
-        //    Use setTimeout(0) so the store update has settled.
         setTimeout(() => {
             const newActiveId = get().activeTabId;
             if (newActiveId && newActiveId !== tabId && window.electronAPI?.browser) {
                 const newActive = get().userTabs.find(t => t.id === newActiveId);
                 if (newActive?.url && newActive.url !== 'about:blank') {
-                    // Re-send resize so the new active tab's BrowserView becomes visible
                     window.electronAPI.browser.resizeViewport(newActiveId, {
                         x: 48, y: 108,
                         width: window.innerWidth - 48,

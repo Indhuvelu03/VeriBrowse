@@ -123,9 +123,21 @@ export function getStats() {
     };
 }
 
+/**
+ * Re-read the in-memory counter from electron-store.
+ * Called after background.js resets the store on a new day,
+ * so the in-memory value doesn't diverge.
+ */
+export function syncFromStore() {
+    callsUsed = store.get('credits.callsUsed', 0);
+    cacheHits = store.get('credits.cacheHits', 0);
+}
+
 // Reset stats (usually called by background.js on a new day)
 export function resetDailyStats() {
     callsUsed = 0;
+    cacheHits = 0;
     store.set('credits.callsUsed', 0);
+    store.set('credits.cacheHits', 0);
     bus.emit('credit:updated', { callsUsed: 0, callsRemaining: CREDIT_LIMIT });
 }

@@ -1,6 +1,5 @@
-import { app, BrowserWindow, BrowserView, ipcMain, screen, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, shell } from 'electron';
 import serve from 'electron-serve';
-import { chromium } from 'playwright';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import Store from 'electron-store';
@@ -23,6 +22,7 @@ import bus from './core/EventBus.js';
 import * as CreditGuard from './core/CreditGuard.js';
 import * as SupabaseService from './services/SupabaseService.js';
 import * as SessionService from './services/SessionService.js';
+import browserManager from './core/BrowserManager.js';
 
 // Agents & Engine (Import for initialization)
 import './core/WorkflowEngine.js';
@@ -53,58 +53,23 @@ function checkDailyCreditReset() {
   if (lastReset !== today) {
     console.log(`[Main] New day detected (${lastReset} → ${today}). Resetting credit counter.`);
     store.set('credits.callsUsed', 0);
+    store.set('credits.cacheHits', 0);
     store.set('credits.lastResetDate', today);
-    // CreditGuard reads from store so updating the store is enough.
-    // Emit updated stats to renderer once it connects.
+    // Sync CreditGuard's in-memory counters with the reset store values
+    CreditGuard.syncFromStore();
   }
 }
 checkDailyCreditReset();
 // ────────────────────────────────────────────────────────────────────────────
 
 
-global.userTabsMap = new Map();
-global.shadowTabsMap = new Map();
-global.playwrightBrowser = null;
-global.playwrightContext = null;
+// BrowserManager handles all Playwright state — no more scattered global.* variables.
+// global.* references are maintained by BrowserManager for backward compat with tools.
 
 let mainWindow;
 
-/**
- * ensureBrowserView(tabId)
- *
- * Guarantees the tab has an Electron BrowserView attached to mainWindow.
- * If one already exists it's returned immediately.
- * This is the bridge between headless Playwright (logic) and the visible
- * Electron window (pixels). Without a BrowserView the viewport is black.
- *
- * Bounds: sidebar (48px) + top chrome (approx 108px).
- * The renderer fine-tunes these via the 'browser:resize-viewport' IPC.
- */
-function ensureBrowserView(tabId) {
-  const entry = global.userTabsMap.get(tabId);
-  if (!entry) return null;
-  if (entry.electronBrowserView) return entry.electronBrowserView; // already exists
-
-  const view = new BrowserView({
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  });
-
-  mainWindow.addBrowserView(view);
-
-  // IMPORTANT: Start hidden (0×0) so it never blocks the home page or agent panel.
-  // The renderer's BrowserLayer sends 'browser:resize-viewport' with real bounds
-  // only when hasUrl=true — that's what makes the page visible.
-  view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-
-  global.userTabsMap.set(tabId, { ...entry, electronBrowserView: view });
-  console.log(`[Main] BrowserView created (hidden) for tab ${tabId}`);
-  return view;
-}
-// Expose globally so tools (navigate.js etc.) can call it without importing background.js
-global.ensureBrowserView = ensureBrowserView;
+// ensureBrowserView is now handled by BrowserManager.
+// global.ensureBrowserView is set by BrowserManager._syncGlobals()
 
 
 async function createWindow() {
@@ -126,7 +91,7 @@ async function createWindow() {
       sandbox: false
     },
   });
-  global.mainWindow = mainWindow; // expose for tools that need to IPC to the renderer
+  browserManager.setMainWindow(mainWindow);
 
   mainWindow.on('ready-to-show', () => {
     console.log('[Main] Window ready-to-show');
@@ -157,6 +122,7 @@ async function createWindow() {
   bridge('agent:summary-ready');
   bridge('agent:chat-response');
   bridge('agent:error');
+  bridge('agent:rate-limited');         // IPCGuard backpressure notifications
   bridge('agent:execution-step');  // autonomous loop live step updates
   bridge('agent:autonomous-done');
   bridge('agent:state-change');    // AutonomousLoop state machine transitions
@@ -202,8 +168,8 @@ async function createWindow() {
     }
   }, 5000);
 
-  // Initialize Playwright in background (don't block UI)
-  initializePlaywright().catch(err => {
+  // Initialize Playwright via BrowserManager (don't block UI)
+  browserManager.init().catch(err => {
     console.error('[Background] Playwright initialization failed:', err);
   });
 
@@ -213,61 +179,12 @@ async function createWindow() {
   });
 }
 
-async function initializePlaywright() {
-  try {
-    global.playwrightBrowser = await chromium.launch({
-      headless: true,
-      args: ['--disable-blink-features=AutomationControlled', '--no-sandbox']
-    });
-
-    global.playwrightContext = await global.playwrightBrowser.newContext({
-      viewport: { width: 1280, height: 800 },
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-    });
-    console.log('[Background] Playwright initialized successfully');
-
-    // Open the initial user tab so BrowserAgent always has a Playwright page to work with.
-    // NOTE: We do NOT pre-create a BrowserView here. BrowserViews are created on-demand
-    // in the browser:navigate / browser:resize-viewport IPC handlers (via ensureBrowserView).
-    // Pre-creating with visible bounds would cover the home page and block the chat input.
-    const initialPage = await global.playwrightContext.newPage();
-    global.userTabsMap.set('user-1', {
-      playwrightPage: initialPage,
-      url: 'about:blank',
-      title: 'New Tab',
-      type: 'user',
-    });
-    global.activeTabId = 'user-1';
-
-    // Tell the renderer about the initial tab so tabStore can register it.
-    // Delay 2s to ensure the renderer's useIPCListeners hook has mounted.
-    // Without this, agent navigation for 'user-1' updates a tab that doesn't
-    // exist in the renderer store, so the BrowserView never gets shown.
-    setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('browser:user-tab-created', {
-          id: 'user-1',
-          url: 'about:blank',
-          title: 'New Tab',
-          favicon: null,
-          isLoading: false,
-        });
-        console.log('[Background] Announced user-1 tab to renderer');
-      }
-    }, 2000);
-
-    console.log('[Background] Initial user tab created: user-1 (no BrowserView yet — created on first navigate)');
-
-  } catch (err) {
-    console.error('[Background] Failed to launch Playwright:', err.message);
-    throw err;
-  }
-}
+// initializePlaywright is now handled by BrowserManager.init()
 
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', async () => {
-  if (global.playwrightBrowser) await global.playwrightBrowser.close();
+  await browserManager.shutdown();
   if (process.platform !== 'darwin') app.quit();
 });
 

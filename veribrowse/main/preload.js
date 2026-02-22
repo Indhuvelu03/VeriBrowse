@@ -32,6 +32,8 @@ const allowedChannels = [
   'agent:execution-step',
   'agent:autonomous-done',
   'agent:state-change',
+  'agent:intent-classified',
+  'agent:rate-limited',
   'credit:updated',
   'credit:warning',
   'credit:critical',
@@ -83,6 +85,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Agent Runtime Stats ──────────────────────────────────────────────────
   agentStats: {
     get: () => ipcRenderer.invoke('agent:get-stats'),
+    getIPCGuardStatus: () => ipcRenderer.invoke('agent:get-stats').then(s => s?.ipcGuard),
   },
 
   // ─── History & Downloads ──────────────────────────────────────────────────
@@ -103,17 +106,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('chat:get-messages', sessionId),
   },
 
+  // ─── Agent Skills ─────────────────────────────────────────────────────────
+  skills: {
+    getAll: () => ipcRenderer.invoke('skills:get-all'),
+    delete: (id) => ipcRenderer.invoke('skills:delete', id),
+    save: (domain, goal, steps) => ipcRenderer.invoke('skills:save', { domain, goal, steps }),
+  },
+
 
   // ─── Event Listeners ──────────────────────────────────────────────────────
-  // Generic on/off for all whitelisted channels
+  // Generic on/off for all whitelisted channels.
+  // We store the wrapped handler on the callback so off() can remove the exact reference.
   on: (channel, callback) => {
     if (allowedChannels.includes(channel)) {
-      ipcRenderer.on(channel, (_, data) => callback(data));
+      const handler = (_, data) => callback(data);
+      callback._ipcHandler = handler; // stash for off()
+      ipcRenderer.on(channel, handler);
     }
   },
   off: (channel, callback) => {
     if (allowedChannels.includes(channel)) {
-      ipcRenderer.removeListener(channel, callback);
+      const handler = callback._ipcHandler || callback;
+      ipcRenderer.removeListener(channel, handler);
     }
   },
   removeAllListeners: (channel) => {

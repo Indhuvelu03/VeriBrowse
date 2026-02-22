@@ -14,6 +14,7 @@
 
 import { generateJSON, vision } from '../CreditGuard.js';
 import { PLANNER_PROMPT, REPAIR_PROMPT, SYSTEM_PROMPT, ACTION_SCHEMA } from '../../constants.js';
+import compactor from '../ContextCompactor.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -74,9 +75,11 @@ function buildPageContext(compact) {
 export async function planSteps(goal, snapshot = null, screenshot = null) {
     const compact = compactSnapshot(snapshot);
     const pageContext = snapshot ? buildPageContext(compact) : 'No page loaded yet (about:blank).';
+    const historyContext = compactor.getCompactContext();
 
     const userPrompt = [
         `## USER GOAL\n${goal}`,
+        `## TASK HISTORY\n${historyContext}`,
         `## CURRENT PAGE STATE\n${pageContext}`,
         `## INSTRUCTIONS\n${PLANNER_PROMPT}`,
     ].join('\n\n');
@@ -178,10 +181,11 @@ export async function repairSelector(failedSelector, goalDescription, snapshot, 
  */
 export async function replan(goal, completedSteps, remainingPlan, stuckReason, snapshot, screenshot = null) {
     const compact = compactSnapshot(snapshot);
+    const historyContext = compactor.getCompactContext();
 
     const userPrompt = [
         `## ORIGINAL GOAL\n${goal}`,
-        `## COMPLETED STEPS\n${JSON.stringify(completedSteps.slice(-8), null, 1)}`,
+        `## TASK HISTORY\n${historyContext}`,
         `## REMAINING PLAN (stalled)\n${JSON.stringify(remainingPlan, null, 1)}`,
         `## STUCK REASON\n${stuckReason}`,
         `## CURRENT PAGE STATE\n${buildPageContext(compact)}`,

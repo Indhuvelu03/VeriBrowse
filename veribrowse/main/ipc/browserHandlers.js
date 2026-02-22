@@ -1,6 +1,7 @@
 import { ipcMain, shell } from 'electron';
 import bus from '../core/EventBus.js';
 import * as SupabaseService from '../services/SupabaseService.js';
+import browserManager from '../core/BrowserManager.js';
 
 /**
  * browserHandlers.js
@@ -11,15 +12,15 @@ import * as SupabaseService from '../services/SupabaseService.js';
 
 export function registerBrowserHandlers() {
     ipcMain.on('browser:navigate', async (event, { tabId, url }) => {
-        const entry = global.userTabsMap.get(tabId);
+        const entry = browserManager.userTabs.get(tabId);
         if (entry?.playwrightPage) {
             try {
                 let targetUrl = url.trim();
                 if (!targetUrl.startsWith('http')) targetUrl = `https://${targetUrl}`;
 
-                global.mainWindow?.webContents.send('browser:user-tab-updated', { tabId, isLoading: true, url: targetUrl });
+                browserManager.mainWindow?.webContents.send('browser:user-tab-updated', { tabId, isLoading: true, url: targetUrl });
 
-                const view = global.ensureBrowserView(tabId);
+                const view = browserManager.ensureBrowserView(tabId);
                 if (view && !view.webContents.isDestroyed()) {
                     view.webContents.loadURL(targetUrl).catch(() => { });
                 }
@@ -28,11 +29,11 @@ export function registerBrowserHandlers() {
                 const currentUrl = entry.playwrightPage.url();
                 const title = await entry.playwrightPage.title().catch(() => currentUrl);
 
-                global.userTabsMap.set(tabId, { ...global.userTabsMap.get(tabId), url: currentUrl, title });
-                global.mainWindow?.webContents.send('browser:user-tab-updated', { tabId, url: currentUrl, title, isLoading: false });
+                browserManager.userTabs.set(tabId, { ...browserManager.userTabs.get(tabId), url: currentUrl, title });
+                browserManager.mainWindow?.webContents.send('browser:user-tab-updated', { tabId, url: currentUrl, title, isLoading: false });
             } catch (e) {
                 console.error('[IPC:navigate] Failed:', e.message);
-                global.mainWindow?.webContents.send('browser:user-tab-updated', { tabId, isLoading: false, error: e.message });
+                browserManager.mainWindow?.webContents.send('browser:user-tab-updated', { tabId, isLoading: false, error: e.message });
             }
         } else {
             bus.emit('execute-step', { step: { agent: 'browser', tool: 'navigate', params: { tabId, url }, id: 'manual' }, workflowId: 'manual' });
@@ -41,39 +42,35 @@ export function registerBrowserHandlers() {
 
     ipcMain.on('browser:new-tab', async (event, { tabId, url = 'about:blank' }) => {
         try {
-            if (!global.playwrightContext) {
+            if (!browserManager.context) {
                 console.warn('[IPC:new-tab] Playwright not ready yet.');
                 return;
             }
-            const page = await global.playwrightContext.newPage();
-            if (url !== 'about:blank') {
-                await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => { });
-            }
-            global.userTabsMap.set(tabId, { playwrightPage: page, url, title: 'New Tab', type: 'user' });
-            global.activeTabId = tabId;
-            console.log(`[IPC:new-tab] Created Playwright page for tab ${tabId}`);
+            // createUserTab() registers the tab AND attaches StateSync automatically
+            await browserManager.createUserTab(tabId, url);
+            console.log(`[IPC:new-tab] Created user tab ${tabId} via BrowserManager`);
         } catch (e) {
             console.error('[IPC:new-tab] Failed:', e.message);
         }
     });
 
     ipcMain.on('browser:hide-viewport', (event, { tabId }) => {
-        const entry = global.userTabsMap.get(tabId ?? global.activeTabId);
+        const entry = browserManager.userTabs.get(tabId ?? browserManager.activeTabId);
         if (entry?.electronBrowserView) {
             entry.electronBrowserView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
         }
     });
 
     ipcMain.on('browser:close-tab', async (event, { tabId }) => {
-        const entry = global.userTabsMap.get(tabId);
+        const entry = browserManager.userTabs.get(tabId);
         if (!entry) return;
 
         if (entry.electronBrowserView) {
             try {
                 entry.electronBrowserView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-                global.mainWindow?.removeBrowserView(entry.electronBrowserView);
+                browserManager.mainWindow?.contentView.removeChildView(entry.electronBrowserView);
             } catch (e) {
-                console.warn('[IPC:close-tab] Error removing BrowserView:', e.message);
+                console.warn('[IPC:close-tab] Error removing WebContentsView:', e.message);
             }
         }
 
@@ -85,25 +82,25 @@ export function registerBrowserHandlers() {
             }
         }
 
-        global.userTabsMap.delete(tabId);
-        if (global.activeTabId === tabId) global.activeTabId = null;
+        browserManager.userTabs.delete(tabId);
+        if (browserManager.activeTabId === tabId) browserManager.activeTabId = null;
         console.log(`[IPC:close-tab] Closed tab ${tabId}`);
     });
 
     ipcMain.on('browser:back', (event, { tabId }) => {
-        bus.emit('execute-step', { agent: 'browser', tool: 'goBack', params: { tabId }, id: 'manual' });
+        bus.emit('execute-step', { step: { agent: 'browser', tool: 'goBack', params: { tabId }, id: `manual-back-${Date.now()}` }, workflowId: null });
     });
 
     ipcMain.on('browser:forward', (event, { tabId }) => {
-        bus.emit('execute-step', { agent: 'browser', tool: 'goForward', params: { tabId }, id: 'manual' });
+        bus.emit('execute-step', { step: { agent: 'browser', tool: 'goForward', params: { tabId }, id: `manual-fwd-${Date.now()}` }, workflowId: null });
     });
 
     ipcMain.on('browser:refresh', (event, { tabId }) => {
-        bus.emit('execute-step', { agent: 'browser', tool: 'refresh', params: { tabId }, id: 'manual' });
+        bus.emit('execute-step', { step: { agent: 'browser', tool: 'refresh', params: { tabId }, id: `manual-ref-${Date.now()}` }, workflowId: null });
     });
 
     ipcMain.on('browser:resize-viewport', (event, { tabId, bounds }) => {
-        const view = global.ensureBrowserView(tabId);
+        const view = browserManager.ensureBrowserView(tabId);
         if (view && !view.webContents.isDestroyed()) {
             view.setBounds({
                 x: Math.round(bounds.x),

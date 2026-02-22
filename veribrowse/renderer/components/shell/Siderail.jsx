@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Home, Bot, History, Download, Settings, User } from 'lucide-react';
+import { Home, Bot, History, Download, Settings, User, Sparkles } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
 import { clsx } from 'clsx';
 import { motion } from 'framer-motion';
@@ -19,6 +19,7 @@ export default function Siderail() {
     const navItems = [
         { id: 'home', icon: Home, label: 'Home', action: () => { setCurrentPage('home'); setActiveView('home'); } },
         { id: 'agent', icon: Bot, label: 'Agent', action: () => toggleAgentPanel() },
+        { id: 'skills', icon: Sparkles, label: 'Skills', action: () => currentPage === 'skills' ? closeOverlays() : setCurrentPage('skills') },
         { id: 'history', icon: History, label: 'History', action: () => currentPage === 'history' ? closeOverlays() : setCurrentPage('history') },
         { id: 'downloads', icon: Download, label: 'Downloads', action: () => currentPage === 'downloads' ? closeOverlays() : setCurrentPage('downloads') },
     ];

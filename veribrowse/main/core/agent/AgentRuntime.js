@@ -20,6 +20,8 @@ import autonomousLoop, { States } from './AutonomousLoop.js';
 import * as SkillMemory from './SkillMemory.js';
 import * as LocalSelector from './LocalSelectorService.js';
 import bus from '../EventBus.js';
+import UIFeedback from '../UIFeedback.js';
+import compactor from '../ContextCompactor.js';
 
 // ─── Runtime State ──────────────────────────────────────────────────────
 let currentAbort = null;    // AbortController for the active task
@@ -30,7 +32,7 @@ let runStats = { totalRuns: 0, totalLLMCalls: 0, skillHits: 0 };
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 function emitStatus(message, status = 'idle') {
-    bus.emit('agent:status', { message, status });
+    UIFeedback.emit({ message, status });
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────
@@ -77,17 +79,16 @@ export async function start(page, goal) {
         currentState = result.state || States.DONE;
 
         // Notify renderer
-        if (global.mainWindow && !global.mainWindow.isDestroyed()) {
-            global.mainWindow.webContents.send('agent:autonomous-done', {
-                result: {
-                    success: result.success,
-                    state: result.state,
-                    stepCount: result.steps?.length || 0,
-                    llmCalls: result.llmCalls || 0,
-                    lastStep: result.steps?.[result.steps.length - 1] || null,
-                },
-            });
-        }
+        const browserManager = (await import('../BrowserManager.js')).default;
+        browserManager.sendToRenderer('agent:autonomous-done', {
+            result: {
+                success: result.success,
+                state: result.state,
+                stepCount: result.steps?.length || 0,
+                llmCalls: result.llmCalls || 0,
+                lastStep: result.steps?.[result.steps.length - 1] || null,
+            },
+        });
 
         return {
             success: result.success,
@@ -141,6 +142,7 @@ export function getStats() {
         ...runStats,
         selectorCacheStats: LocalSelector.getStats(),
         skillMemoryStats: SkillMemory.getStats(),
+        contextCompactorStats: compactor.getStats(),
         currentState,
         currentGoal,
     };

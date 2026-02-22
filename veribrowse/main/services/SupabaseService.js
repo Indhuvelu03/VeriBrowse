@@ -3,14 +3,79 @@ import Store from 'electron-store';
 import { embed } from './EmbeddingService.js';
 
 const store = new Store();
+const localStore = new Store({ name: 'local-fallback-db' });
+
+// ─── Memoised Supabase Client ─────────────────────────────────────────────────
+// Creating a new client on every call is expensive and causes connection churn.
+// We cache the instance and invalidate if credentials change between restarts.
+let _cachedClient = null;
+let _cachedUrl = null;
+let _cachedKey = null;
 
 function getSupabase() {
     const url = store.get('supabaseUrl');
     const key = store.get('supabaseAnonKey');
-    if (!url || !key) {
-        throw new Error('[SupabaseService] Supabase credentials not found in store.');
+    if (!url || !key) return null;
+
+    if (_cachedClient && url === _cachedUrl && key === _cachedKey) {
+        return _cachedClient;
     }
-    return createClient(url, key);
+
+    _cachedClient = createClient(url, key);
+    _cachedUrl = url;
+    _cachedKey = key;
+    return _cachedClient;
+}
+
+// ─── Retry / Backoff Helper ───────────────────────────────────────────────────
+/**
+ * Wraps a Supabase operation with exponential backoff + jitter (up to 3 attempts).
+ *
+ * Only retries on transient errors (network timeouts, 5xx-class Supabase codes).
+ * Hard failures (bad schema, constraint violations) are re-thrown immediately.
+ *
+ * @param {() => Promise<any>} fn   - The async operation to attempt.
+ * @param {string}             label - Log label for diagnostics.
+ * @param {number}             [maxAttempts=3]
+ * @returns {Promise<any>}
+ */
+async function withRetry(fn, label, maxAttempts = 3) {
+    const TRANSIENT_CODES = new Set([
+        'PGRST301', // connection error
+        'PGRST502', // bad gateway
+        'EAGAIN',
+        'ECONNRESET',
+        'ENOTFOUND',
+        'ETIMEDOUT',
+        'UND_ERR_CONNECT_TIMEOUT',
+    ]);
+
+    let lastErr;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await fn();
+        } catch (err) {
+            lastErr = err;
+
+            const code = err?.code || err?.message || '';
+            const isTransient = (
+                TRANSIENT_CODES.has(code) ||
+                /network|timeout|EAGAIN|reset|econnreset|ENOTFOUND/i.test(code)
+            );
+
+            if (!isTransient || attempt === maxAttempts) {
+                throw err;
+            }
+
+            // Exponential backoff with ±30% jitter
+            const base = Math.min(300 * Math.pow(2, attempt - 1), 3000); // 300ms, 600ms, 1200ms …
+            const jitter = base * 0.3 * (Math.random() * 2 - 1);
+            const delay = Math.round(base + jitter);
+            console.warn(`[SupabaseService] ${label} — attempt ${attempt} failed, retrying in ${delay}ms… (${err.message})`);
+            await new Promise(r => setTimeout(r, delay));
+        }
+    }
+    throw lastErr;
 }
 
 // ─── HISTORY ────────────────────────────────────────────────────────────────
@@ -18,14 +83,21 @@ function getSupabase() {
 export async function addHistory(url, title, faviconUrl) {
     try {
         const supabase = getSupabase();
+        if (!supabase) {
+            const history = localStore.get('history', []);
+            history.unshift({ url, title, favicon_url: faviconUrl, visited_at: new Date().toISOString() });
+            localStore.set('history', history.slice(0, 1000));
+            return;
+        }
+
         const embedding = await embed(`${title} ${url}`);
-        const { error } = await supabase.from('history').insert({
-            url,
-            title,
-            favicon_url: faviconUrl,
-            embedding,
-        });
-        if (error) throw error;
+        await withRetry(async () => {
+            const { error } = await supabase.from('history').insert({
+                url, title, favicon_url: faviconUrl, embedding,
+            });
+            if (error) throw error;
+        }, 'addHistory');
+
     } catch (err) {
         console.error('[SupabaseService] addHistory failed:', err.message);
     }
@@ -34,18 +106,28 @@ export async function addHistory(url, title, faviconUrl) {
 export async function getHistory(search = '', limit = 50, offset = 0) {
     try {
         const supabase = getSupabase();
-        let query = supabase
-            .from('history')
-            .select('*')
-            .order('visited_at', { ascending: false });
-
-        if (search) {
-            query = query.or(`title.ilike.%${search}%,url.ilike.%${search}%`);
+        if (!supabase) {
+            let history = localStore.get('history', []);
+            if (search) {
+                const s = search.toLowerCase();
+                history = history.filter(h => h.title?.toLowerCase().includes(s) || h.url?.toLowerCase().includes(s));
+            }
+            return history.slice(offset, offset + limit);
         }
 
-        const { data, error } = await query.range(offset, offset + limit - 1);
-        if (error) throw error;
-        return data;
+        return await withRetry(async () => {
+            let query = supabase
+                .from('history')
+                .select('*')
+                .order('visited_at', { ascending: false });
+
+            if (search) query = query.or(`title.ilike.%${search}%,url.ilike.%${search}%`);
+
+            const { data, error } = await query.range(offset, offset + limit - 1);
+            if (error) throw error;
+            return data;
+        }, 'getHistory');
+
     } catch (err) {
         console.error('[SupabaseService] getHistory failed:', err.message);
         return [];
@@ -55,8 +137,14 @@ export async function getHistory(search = '', limit = 50, offset = 0) {
 export async function clearHistory() {
     try {
         const supabase = getSupabase();
-        const { error } = await supabase.from('history').delete().neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all
-        if (error) throw error;
+        if (!supabase) {
+            localStore.set('history', []);
+            return;
+        }
+        await withRetry(async () => {
+            const { error } = await supabase.from('history').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+            if (error) throw error;
+        }, 'clearHistory');
     } catch (err) {
         console.error('[SupabaseService] clearHistory failed:', err.message);
     }
@@ -67,60 +155,96 @@ export async function clearHistory() {
 export async function addChatMessage(sessionId, role, content, workflowId = null) {
     try {
         const supabase = getSupabase();
+        if (!supabase) {
+            const chats = localStore.get(`chat_${sessionId}`, []);
+            chats.push({ session_id: sessionId, role, content, workflow_id: workflowId, created_at: new Date().toISOString() });
+            localStore.set(`chat_${sessionId}`, chats);
+            return;
+        }
+
         const embedding = await embed(content);
-        const { error } = await supabase.from('chat_history').insert({
-            session_id: sessionId,
-            role,
-            content,
-            workflow_id: workflowId,
-            embedding,
-        });
-        if (error) throw error;
+        await withRetry(async () => {
+            const { error } = await supabase.from('chat_history').insert({
+                session_id: sessionId, role, content, workflow_id: workflowId, embedding,
+            });
+            if (error) throw error;
+        }, 'addChatMessage');
+
     } catch (err) {
         console.error('[SupabaseService] addChatMessage failed:', err.message);
     }
 }
 
 export async function getChatMessages(sessionId) {
-    const supabase = getSupabase();
-    const { data, error } = await supabase
-        .from('chat_history')
-        .select('*')
-        .eq('session_id', sessionId)
-        .order('created_at', { ascending: true });
-    if (error) throw error;
-    return data;
+    try {
+        const supabase = getSupabase();
+        if (!supabase) return localStore.get(`chat_${sessionId}`, []);
+
+        return await withRetry(async () => {
+            const { data, error } = await supabase
+                .from('chat_history')
+                .select('*')
+                .eq('session_id', sessionId)
+                .order('created_at', { ascending: true });
+            if (error) throw error;
+            return data;
+        }, 'getChatMessages');
+
+    } catch (err) {
+        console.error('[SupabaseService] getChatMessages failed:', err.message);
+        return [];
+    }
 }
+
+// Alias — ServiceHandlers used getChatHistory in older code
+export const getChatHistory = getChatMessages;
 
 // ─── DOWNLOADS ─────────────────────────────────────────────────────────────
 
 export async function addDownload(filename, url, path, size, mime) {
     try {
         const supabase = getSupabase();
+        if (!supabase) {
+            const downloads = localStore.get('downloads', []);
+            downloads.unshift({ filename, url, saved_path: path, file_size: size, mime_type: mime, downloaded_at: new Date().toISOString() });
+            localStore.set('downloads', downloads.slice(0, 500));
+            return;
+        }
+
         const embedding = await embed(`${filename} ${url}`);
-        const { error } = await supabase.from('downloads').insert({
-            filename,
-            url,
-            saved_path: path,
-            file_size: size,
-            mime_type: mime,
-            embedding,
-        });
-        if (error) throw error;
+        await withRetry(async () => {
+            const { error } = await supabase.from('downloads').insert({
+                filename, url, saved_path: path, file_size: size, mime_type: mime, embedding,
+            });
+            if (error) throw error;
+        }, 'addDownload');
+
     } catch (err) {
         console.error('[SupabaseService] addDownload failed:', err.message);
     }
 }
 
 export async function getDownloads(limit = 50, offset = 0) {
-    const supabase = getSupabase();
-    const { data, error } = await supabase
-        .from('downloads')
-        .select('*')
-        .order('downloaded_at', { ascending: false })
-        .range(offset, offset + limit - 1);
-    if (error) throw error;
-    return data;
+    try {
+        const supabase = getSupabase();
+        if (!supabase) {
+            return localStore.get('downloads', []).slice(offset, offset + limit);
+        }
+
+        return await withRetry(async () => {
+            const { data, error } = await supabase
+                .from('downloads')
+                .select('*')
+                .order('downloaded_at', { ascending: false })
+                .range(offset, offset + limit - 1);
+            if (error) throw error;
+            return data;
+        }, 'getDownloads');
+
+    } catch (err) {
+        console.error('[SupabaseService] getDownloads failed:', err.message);
+        return [];
+    }
 }
 
 // ─── AGENT SKILLS ───────────────────────────────────────────────────────────
@@ -128,63 +252,132 @@ export async function getDownloads(limit = 50, offset = 0) {
 export async function saveSkill(domain, skillName, goal, steps) {
     try {
         const supabase = getSupabase();
-        const embedding = await embed(`${skillName} ${goal}`);
-
-        // Use manual check-then-insert/update instead of upsert+onConflict
-        // because the UNIQUE(domain, skill_name) constraint may not exist in the
-        // live DB yet (needs schema migration). This approach works either way.
-        const { data: existing } = await supabase
-            .from('agent_skills')
-            .select('id')
-            .eq('domain', domain)
-            .eq('skill_name', skillName)
-            .maybeSingle();
-
-        if (existing?.id) {
-            // UPDATE existing skill
-            const { error } = await supabase
-                .from('agent_skills')
-                .update({ goal, steps, embedding, updated_at: new Date() })
-                .eq('id', existing.id);
-            if (error) throw error;
-        } else {
-            // INSERT new skill
-            const { error } = await supabase
-                .from('agent_skills')
-                .insert({ domain, skill_name: skillName, goal, steps, embedding });
-            if (error) throw error;
+        if (!supabase) {
+            const skills = localStore.get('skills', {});
+            if (!skills[domain]) skills[domain] = {};
+            skills[domain][skillName] = { goal, steps, updated_at: new Date().toISOString() };
+            localStore.set('skills', skills);
+            return;
         }
+
+        const embedding = await embed(`${skillName} ${goal}`);
+        await withRetry(async () => {
+            const { data: existing } = await supabase
+                .from('agent_skills')
+                .select('id')
+                .eq('domain', domain)
+                .eq('skill_name', skillName)
+                .maybeSingle();
+
+            if (existing?.id) {
+                const { error } = await supabase
+                    .from('agent_skills')
+                    .update({ goal, steps, embedding, updated_at: new Date() })
+                    .eq('id', existing.id);
+                if (error) throw error;
+            } else {
+                const { error } = await supabase
+                    .from('agent_skills')
+                    .insert({ domain, skill_name: skillName, goal, steps, embedding });
+                if (error) throw error;
+            }
+        }, 'saveSkill');
+
     } catch (err) {
         console.error('[SupabaseService] saveSkill failed:', err.message);
     }
 }
 
-
 export async function recallSkill(domain, goal) {
     try {
         const supabase = getSupabase();
-        const queryEmbedding = await embed(goal);
-        const { data, error } = await supabase.rpc('semantic_search', {
-            query_embedding: queryEmbedding,
-            match_threshold: 0.85,
-            match_count: 1
-        });
-        if (error) throw error;
-
-        // Filter for skills only
-        const skillMatch = data.find(item => item.source === 'skill');
-        if (skillMatch) {
-            const { data: skillData } = await supabase
-                .from('agent_skills')
-                .select('steps')
-                .eq('id', skillMatch.id)
-                .single();
-            return skillData?.steps || null;
+        if (!supabase) {
+            const skills = localStore.get('skills', {});
+            const domainSkills = skills[domain] || {};
+            for (const [, skill] of Object.entries(domainSkills)) {
+                if (skill.goal.toLowerCase() === goal.toLowerCase() ||
+                    goal.toLowerCase().includes(skill.goal.toLowerCase())) {
+                    return skill.steps;
+                }
+            }
+            return null;
         }
-        return null;
+
+        return await withRetry(async () => {
+            const queryEmbedding = await embed(goal);
+            const { data, error } = await supabase.rpc('semantic_search', {
+                query_embedding: queryEmbedding,
+                match_threshold: 0.85,
+                match_count: 1,
+            });
+            if (error) throw error;
+
+            const skillMatch = data?.find(item => item.source === 'skill');
+            if (skillMatch) {
+                const { data: skillData } = await supabase
+                    .from('agent_skills')
+                    .select('steps')
+                    .eq('id', skillMatch.id)
+                    .single();
+                return skillData?.steps || null;
+            }
+            return null;
+        }, 'recallSkill');
+
     } catch (err) {
         console.error('[SupabaseService] recallSkill failed:', err.message);
         return null;
+    }
+}
+
+export async function getAllSkills() {
+    try {
+        const supabase = getSupabase();
+        if (!supabase) {
+            const skillsMap = localStore.get('skills', {});
+            const all = [];
+            for (const domain in skillsMap) {
+                for (const name in skillsMap[domain]) {
+                    all.push({ ...skillsMap[domain][name], domain, skill_name: name });
+                }
+            }
+            return all.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+        }
+
+        return await withRetry(async () => {
+            const { data, error } = await supabase
+                .from('agent_skills')
+                .select('id, domain, skill_name, goal, steps, created_at, updated_at')
+                .order('updated_at', { ascending: false });
+            if (error) throw error;
+            return data;
+        }, 'getAllSkills');
+
+    } catch (err) {
+        console.error('[SupabaseService] getAllSkills failed:', err.message);
+        return [];
+    }
+}
+
+export async function deleteSkill(id) {
+    try {
+        const supabase = getSupabase();
+        if (!supabase) {
+            // Local fallback for deletion is tricky with IDs, but we can search by name/domain if needed
+            // For now, simple return for local
+            return;
+        }
+
+        await withRetry(async () => {
+            const { error } = await supabase
+                .from('agent_skills')
+                .delete()
+                .eq('id', id);
+            if (error) throw error;
+        }, 'deleteSkill');
+
+    } catch (err) {
+        console.error('[SupabaseService] deleteSkill failed:', err.message);
     }
 }
 
@@ -193,14 +386,24 @@ export async function recallSkill(domain, goal) {
 export async function getCachedPrompt(hash) {
     try {
         const supabase = getSupabase();
-        const { data, error } = await supabase
-            .from('prompt_cache')
-            .select('response')
-            .eq('prompt_hash', hash)
-            .gt('expires_at', new Date().toISOString())
-            .single();
-        if (error && error.code !== 'PGRST116') throw error; // PGRST116 is single result empty
-        return data?.response || null;
+        if (!supabase) {
+            const cache = localStore.get('prompt_cache', {});
+            const entry = cache[hash];
+            if (entry && new Date(entry.expires_at) > new Date()) return entry.response;
+            return null;
+        }
+
+        return await withRetry(async () => {
+            const { data, error } = await supabase
+                .from('prompt_cache')
+                .select('response')
+                .eq('prompt_hash', hash)
+                .gt('expires_at', new Date().toISOString())
+                .single();
+            if (error && error.code !== 'PGRST116') throw error;
+            return data?.response || null;
+        }, 'getCachedPrompt');
+
     } catch (err) {
         console.error('[SupabaseService] getCachedPrompt failed:', err.message);
         return null;
@@ -210,13 +413,33 @@ export async function getCachedPrompt(hash) {
 export async function setCachedPrompt(hash, response, model) {
     try {
         const supabase = getSupabase();
-        const { error } = await supabase.from('prompt_cache').insert({
-            prompt_hash: hash,
-            response,
-            model,
-            expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-        });
-        if (error) throw error;
+        // ── FIX: was missing the null guard — crashed when Supabase not configured ──
+        if (!supabase) {
+            const cache = localStore.get('prompt_cache', {});
+            cache[hash] = {
+                response,
+                model,
+                expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+            };
+            // Keep cache bounded — evict oldest 20% when over 200 entries
+            const keys = Object.keys(cache);
+            if (keys.length > 200) {
+                keys.slice(0, Math.floor(keys.length * 0.2)).forEach(k => delete cache[k]);
+            }
+            localStore.set('prompt_cache', cache);
+            return;
+        }
+
+        await withRetry(async () => {
+            const { error } = await supabase.from('prompt_cache').insert({
+                prompt_hash: hash,
+                response,
+                model,
+                expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+            });
+            if (error) throw error;
+        }, 'setCachedPrompt');
+
     } catch (err) {
         console.error('[SupabaseService] setCachedPrompt failed:', err.message);
     }
@@ -227,14 +450,23 @@ export async function setCachedPrompt(hash, response, model) {
 export async function semanticSearch(query) {
     try {
         const supabase = getSupabase();
-        const queryEmbedding = await embed(query);
-        const { data, error } = await supabase.rpc('semantic_search', {
-            query_embedding: queryEmbedding,
-            match_threshold: 0.7,
-            match_count: 10
-        });
-        if (error) throw error;
-        return data;
+        // ── FIX: was missing the null guard — crashed when Supabase not configured ──
+        if (!supabase) {
+            console.warn('[SupabaseService] semanticSearch skipped — Supabase not configured.');
+            return [];
+        }
+
+        return await withRetry(async () => {
+            const queryEmbedding = await embed(query);
+            const { data, error } = await supabase.rpc('semantic_search', {
+                query_embedding: queryEmbedding,
+                match_threshold: 0.7,
+                match_count: 10,
+            });
+            if (error) throw error;
+            return data || [];
+        }, 'semanticSearch');
+
     } catch (err) {
         console.error('[SupabaseService] semanticSearch failed:', err.message);
         return [];

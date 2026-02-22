@@ -11,7 +11,7 @@ import { useUIStore } from '../store/uiStore';
  */
 
 export default function useIPCListeners() {
-    const { addTab, updateTab, removeTab, setActiveTab } = useTabStore();
+    const { addTab, updateTab, removeTab, setActiveTab, addShadowTab, updateShadowTab, removeShadowTab } = useTabStore();
     const {
         updateStatus,
         updateStep,
@@ -65,6 +65,23 @@ export default function useIPCListeners() {
             removeTab(tabId);
         });
 
+        // --- SHADOW TAB EVENTS ---
+        api.on('browser:shadow-tab-created', (tab) => {
+            addShadowTab(tab);
+        });
+
+        api.on('browser:shadow-tab-updated', (data) => {
+            updateShadowTab(data.tabId, {
+                url: data.url,
+                title: data.title,
+                isLoading: data.isLoading
+            });
+        });
+
+        api.on('browser:shadow-tab-closed', ({ tabId }) => {
+            removeShadowTab(tabId);
+        });
+
         // --- WORKFLOW / STEP EVENTS ---
         api.on('workflow:step-updated', (data) => {
             if (data.steps) {
@@ -109,6 +126,23 @@ export default function useIPCListeners() {
         api.on('agent:error', ({ error }) => {
             setError(error);
             addToast(`Error: ${error}`, 'error');
+        });
+
+        // Rate-limit feedback — emitted by IPCGuard when agent:run is rejected
+        // because a task is still running or within the post-task cooldown.
+        api.on('agent:rate-limited', ({ channel, reason }) => {
+            console.warn(`[useIPCListeners] Rate-limited on "${channel}" (${reason})`);
+            // If the store got stuck in isRunning, reset it so the user can retry.
+            const { isRunning } = useWorkflowStore.getState();
+            if (reason === 'cooldown' && isRunning) {
+                // Cooldown means the previous task DID finish — reset isRunning.
+                useWorkflowStore.setState({ isRunning: false, agentStatus: 'idle' });
+            }
+            // We intentionally do NOT show a toast for 'already_running'
+            // since the UI already shows the agent is working.
+            if (reason === 'cooldown') {
+                addToast('Please wait a moment before starting a new task.', 'info');
+            }
         });
 
         // --- AUTONOMOUS LOOP STEP EVENTS ---
@@ -166,11 +200,15 @@ export default function useIPCListeners() {
                 'agent:summary-ready',
                 'agent:chat-response',
                 'agent:error',
+                'agent:rate-limited',
                 'agent:execution-step',
                 'agent:autonomous-done',
                 'credit:updated',
                 'credit:warning',
                 'credit:critical',
+                'browser:shadow-tab-created',
+                'browser:shadow-tab-updated',
+                'browser:shadow-tab-closed',
             ];
             channels.forEach(ch => api.removeAllListeners(ch));
         };

@@ -2,17 +2,27 @@ import bus from './EventBus.js';
 import * as TaskSnapshot from './TaskSnapshot.js';
 import * as PlannerAgent from '../planner/PlannerAgent.js';
 import * as CreditGuard from './CreditGuard.js';
-import * as IntentClassifier from './IntentClassifier.js';
+import * as IntentDispatcher from './IntentDispatcher.js';
+import { Intents } from './IntentDispatcher.js';
 import * as AgentRuntime from './agent/AgentRuntime.js';
+import UIFeedback from './UIFeedback.js';
+import browserManager from './BrowserManager.js';
 
 /**
  * WorkflowEngine
- * 
- * The core orchestrator of VeriBrowse.
- * - Executes workflows as a DAG (Directed Acyclic Graph).
- * - Manages state snapshots before every tool call.
- * - Handles auto-replanning on tool failure.
- * - Intercepts CAPTCHA/Login needs (HITL).
+ *
+ * The unified orchestrator of VeriBrowse's Hybrid Intent System.
+ *
+ * Architecture (Fellou.ai model):
+ *   1. IntentDispatcher classifies into CHAT / QUICK_ACTION / LONG_HORIZON
+ *   2. CHAT → immediate LLM response (no browser)
+ *   3. QUICK_ACTION → single-step execute-step dispatch
+ *   4. LONG_HORIZON → AgentRuntime autonomous loop (shadow workspace)
+ *
+ * The old dual-path (DAG task + autonomous) is unified:
+ *   - ALL multi-step tasks go through AgentRuntime (plan-once, execute-locally)
+ *   - The DAG dispatcher remains as a fallback for externally-injected workflows
+ *   - HITL (Human-in-the-Loop) works for both paths via EventBus pause/resume
  */
 
 class WorkflowEngine {
@@ -24,18 +34,16 @@ class WorkflowEngine {
     }
 
     setupListeners() {
-        // Listen for new workflow requests from Renderer -> Background -> Bus
+        // Primary entry point: user submits a goal
         bus.on('workflow:start', async ({ goal, context, mode }) => {
             await this.initWorkflow(goal, context, mode);
         });
 
-        // Listen for successful tool results from Agents
+        // Tool results from BrowserAgent (for injected DAG workflows + QUICK_ACTION)
         bus.on('step-result', (payload) => {
-            // payload: { stepId, workflowId, result: { success, result, error } }
             this.handleStepResult(payload);
         });
 
-        // Listen for hard errors emitted by BrowserAgent
         bus.on('step-error', ({ stepId, workflowId, error }) => {
             this.handleStepResult({
                 stepId,
@@ -43,158 +51,179 @@ class WorkflowEngine {
                 result: { success: false, result: null, error },
             });
         });
-
-        // NOTE: workflow:summarize is handled exclusively by SummaryAgent.js.
-        // Registering it here too caused two LLM calls per completed workflow.
-        // DO NOT add a workflow:summarize listener in this class.
-
-        // FIX 1: HITL Resume — renderer sends agent:resume -> preload -> ipcMain -> bus.emit('workflow:resume')
-        // No handler here; the one-shot Promise inside waitForResume() handles this per-workflow.
     }
 
+    // ─── Primary Entry Point ────────────────────────────────────────────
+
     async initWorkflow(goal, context, mode = 'refine') {
-        console.log(`[WorkflowEngine] Starting workflow for goal: "${goal}" (mode: ${mode})`);
+        console.log(`[WorkflowEngine] Goal: "${goal}" (mode: ${mode})`);
 
         try {
-            bus.emit('agent:status', { message: 'Classifying intent...', status: 'planning' });
+            // ── Stage 1: Intent Dispatch ──
+            UIFeedback.emit('CLASSIFYING');
 
-            // Determine intent based on mode or auto-classify
-            let intent, response, url;
-
-            if (mode === 'think') {
-                // Think mode: force conversational response
-                intent = 'chat';
-                const result = await IntentClassifier.classify(goal);
-                response = result.response;
-            } else if (mode === 'act') {
-                // Act mode: force task workflow
-                intent = 'task';
-            } else {
-                // Refine mode (default): auto-classify via LLM
-                const result = await IntentClassifier.classify(goal);
-                intent = result.intent;
-                response = result.response;
-                url = result.url;
-            }
-
-            console.log(`[WorkflowEngine] Intent classified as: ${intent}`);
-
-            // Route based on intent
-            if (intent === 'chat') {
-                // Direct conversational response — no browser automation
-                const chatResponse = response || "I'm VeriBrowse AI. Give me a task like \"Go to Amazon and search for laptops\" and I'll handle it.";
-                bus.emit('agent:chat-response', { goal, response: chatResponse });
-                bus.emit('agent:status', { message: 'Ready', status: 'idle' });
-                return;
-            }
-
-            if (intent === 'navigate') {
-                // Direct navigation — skip planner, execute navigate tool directly
-                const targetUrl = url || this.extractUrl(goal);
-                if (targetUrl) {
-                    bus.emit('agent:status', { message: `Navigating to ${targetUrl}...`, status: 'executing' });
-                    bus.emit('execute-step', {
-                        step: {
-                            id: 'direct-nav-' + Date.now(),
-                            agent: 'browser',
-                            tool: 'navigate',
-                            description: `Navigate to ${targetUrl}`,
-                            params: { url: targetUrl },
-                            dependsOn: [],
-                        },
-                        workflowId: null,
-                    });
-                    bus.emit('agent:chat-response', { goal, response: `Navigating to ${targetUrl}...` });
-                    return;
-                }
-                // If URL extraction failed, fall through to task
-                console.warn('[WorkflowEngine] Navigate intent but no URL found, falling through to task planning');
-            }
-
-            // Autonomous intent: hand off to AgentRuntime (plan-once, execute-locally)
-            if (intent === 'autonomous') {
-                const tabId = global.activeTabId || Array.from(global.userTabsMap.keys())[0];
-                const entry = global.userTabsMap?.get(tabId);
-                if (!entry?.playwrightPage) {
-                    bus.emit('agent:error', { error: 'No browser tab available for autonomous mode.' });
-                    return;
-                }
-
-                try {
-                    const { success, result } = await AgentRuntime.start(entry.playwrightPage, goal);
-                    if (!success) {
-                        bus.emit('agent:error', { error: result?.error || 'Autonomous task failed' });
-                    }
-                } catch (loopErr) {
-                    console.error('[WorkflowEngine] Autonomous runtime failed:', loopErr.message);
-                    bus.emit('agent:error', { error: loopErr.message });
-                }
-                return;
-            }
-
-            // Task intent: full workflow planning via PlannerAgent
-            bus.emit('agent:status', { message: 'Planning workflow...', status: 'planning' });
-
-            const workflow = await PlannerAgent.plan(goal, context);
-
-            this.activeWorkflows.set(workflow.id, {
-                ...workflow,
-                status: 'running',
-                startTime: Date.now(),
-                replanAttempts: 0,
-                steps: workflow.steps.map(s => ({ ...s, status: 'pending', result: null }))
+            const classification = await IntentDispatcher.dispatch(goal, {
+                currentUrl: context?.currentUrl,
+                currentTitle: context?.currentTitle,
             });
 
-            // Dispatch first set of ready steps
-            await this.dispatchReadySteps(workflow.id);
+            const { intent_type, confidence_score, reasoning_summary } = classification;
+            console.log(`[WorkflowEngine] Intent: ${intent_type} (${confidence_score}) — ${reasoning_summary}`);
+
+            // Mode overrides
+            let effectiveIntent = intent_type;
+            if (mode === 'act' && effectiveIntent === Intents.CHAT) {
+                // User forced ACT mode → promote to LONG_HORIZON
+                effectiveIntent = Intents.LONG_HORIZON;
+                console.log('[WorkflowEngine] Mode override: CHAT → LONG_HORIZON (act mode)');
+            }
+
+            // ── Route by intent ──
+
+            // 1. CHAT_INTENT — Conversational reply
+            if (effectiveIntent === Intents.CHAT) {
+                return this._handleChat(goal, classification);
+            }
+
+            // 2. QUICK_ACTION — Single-step fast path
+            if (effectiveIntent === Intents.QUICK_ACTION) {
+                return this._handleQuickAction(goal, classification);
+            }
+
+            // 3. LONG_HORIZON_AUTOMATION — Full autonomous loop
+            if (effectiveIntent === Intents.LONG_HORIZON) {
+                return this._handleLongHorizon(goal, classification);
+            }
+
+            // Fallback: treat unknown as LONG_HORIZON
+            console.warn(`[WorkflowEngine] Unknown intent '${effectiveIntent}', falling back to LONG_HORIZON`);
+            return this._handleLongHorizon(goal, classification);
 
         } catch (err) {
             console.error('[WorkflowEngine] Init failed:', err.message);
+            UIFeedback.emit('FAILED', err.message);
             bus.emit('agent:error', { error: err.message });
         }
     }
 
+    // ─── Intent Handlers ────────────────────────────────────────────────
+
     /**
-     * Attempt to extract a URL from a user command like "go to google" or "open youtube".
+     * CHAT_INTENT: Direct conversational response.
+     * If IntentDispatcher already has a response, use it. Otherwise generate one.
      */
+    async _handleChat(goal, classification) {
+        UIFeedback.emit('THINKING');
+
+        let response = classification.response;
+        if (!response) {
+            // Need a dedicated chat response (IntentDispatcher didn't include one)
+            try {
+                response = await CreditGuard.generate(
+                    `You are VeriBrowse, a helpful AI browser assistant. Answer the user's message conversationally.\n\nUser: ${goal}`
+                );
+            } catch (e) {
+                response = "I'm VeriBrowse AI. I can help you browse the web — try asking me to search for something or navigate to a site!";
+            }
+        }
+
+        bus.emit('agent:chat-response', { goal, response });
+        UIFeedback.emit('CHATTING');
+    }
+
+    /**
+     * QUICK_ACTION: Single-step execution.
+     * Navigate, click, or extract — then done.
+     */
+    _handleQuickAction(goal, classification) {
+        const url = classification.url || this.extractUrl(goal);
+
+        if (url) {
+            UIFeedback.emit('NAVIGATING', url);
+            bus.emit('execute-step', {
+                step: {
+                    id: `quick-nav-${Date.now()}`,
+                    agent: 'browser',
+                    tool: 'navigate',
+                    description: `Navigate to ${url}`,
+                    params: { url },
+                    dependsOn: [],
+                },
+                workflowId: null,
+            });
+            bus.emit('agent:chat-response', { goal, response: `Navigating to ${url}…` });
+            return;
+        }
+
+        // Non-navigate quick action (click, extract) — use the autonomous loop for reliability
+        // but with a single-step goal, it will plan 1-2 steps and be fast
+        console.log('[WorkflowEngine] QUICK_ACTION without URL — delegating to autonomous loop');
+        return this._handleLongHorizon(goal, classification);
+    }
+
+    /**
+     * LONG_HORIZON_AUTOMATION: Full autonomous execution.
+     * Uses AgentRuntime which orchestrates AutonomousLoop (plan-once, execute-locally).
+     * This is the Z-Axis shadow workspace — execution happens in background.
+     */
+    async _handleLongHorizon(goal, classification) {
+        UIFeedback.emit('PLANNING');
+
+        const page = browserManager.getActivePage();
+        if (!page) {
+            bus.emit('agent:error', { error: 'No browser tab available. Open a tab first.' });
+            UIFeedback.emit('FAILED', 'No browser tab');
+            return;
+        }
+
+        try {
+            const { success, result } = await AgentRuntime.start(page, goal);
+            if (!success) {
+                bus.emit('agent:error', { error: result?.error || 'Autonomous task failed' });
+            }
+        } catch (err) {
+            console.error('[WorkflowEngine] Autonomous runtime failed:', err.message);
+            bus.emit('agent:error', { error: err.message });
+            UIFeedback.emit('FAILED', err.message);
+        }
+    }
+
+    // ─── URL Extraction ─────────────────────────────────────────────────
+
     extractUrl(input) {
         const lower = input.toLowerCase().trim();
-        // Remove command prefixes
         const cleaned = lower
-            .replace(/^(go to|open|visit|navigate to|take me to)\s+/i, '')
+            .replace(/^(go to|open|visit|navigate to|take me to|show me)\s+/i, '')
             .trim();
 
-        // If it already has a protocol
         if (cleaned.startsWith('http')) return cleaned;
-
-        // If it looks like a domain
         if (cleaned.includes('.')) return `https://${cleaned}`;
 
-        // Common site names
         const siteMap = {
-            'google': 'https://www.google.com',
-            'youtube': 'https://www.youtube.com',
-            'github': 'https://www.github.com',
-            'reddit': 'https://www.reddit.com',
-            'twitter': 'https://www.twitter.com',
-            'x': 'https://www.x.com',
-            'facebook': 'https://www.facebook.com',
-            'amazon': 'https://www.amazon.com',
-            'wikipedia': 'https://www.wikipedia.org',
-            'linkedin': 'https://www.linkedin.com',
-            'instagram': 'https://www.instagram.com',
-            'stackoverflow': 'https://stackoverflow.com',
+            google: 'https://www.google.com',
+            youtube: 'https://www.youtube.com',
+            github: 'https://www.github.com',
+            reddit: 'https://www.reddit.com',
+            twitter: 'https://www.twitter.com',
+            x: 'https://www.x.com',
+            facebook: 'https://www.facebook.com',
+            amazon: 'https://www.amazon.com',
+            wikipedia: 'https://www.wikipedia.org',
+            linkedin: 'https://www.linkedin.com',
+            instagram: 'https://www.instagram.com',
+            stackoverflow: 'https://stackoverflow.com',
             'stack overflow': 'https://stackoverflow.com',
         };
 
-        return siteMap[cleaned] || `https://www.${cleaned}.com`;
+        return siteMap[cleaned] || null;
     }
+
+    // ─── DAG Dispatch (for injected workflows / step-result compat) ─────
 
     async dispatchReadySteps(workflowId) {
         const workflow = this.activeWorkflows.get(workflowId);
         if (!workflow || workflow.status !== 'running') return;
 
-        // Find steps that are 'pending' and have all 'dependsOn' satisfied
         const readySteps = workflow.steps.filter(step => {
             if (step.status !== 'pending') return false;
             if (!step.dependsOn || step.dependsOn.length === 0) return true;
@@ -219,7 +248,7 @@ class WorkflowEngine {
 
             // 3. Save snapshot before execution
             TaskSnapshot.save(workflowId, step.id, {
-                activeTabs: Array.from(global.userTabsMap.keys())
+                activeTabs: Array.from(browserManager.userTabs.keys())
             });
 
             // 4. Dispatch to Agents via EventBus — wrap with workflowId for routing
@@ -317,8 +346,8 @@ class WorkflowEngine {
             console.log(`[WorkflowEngine] Replan attempt ${workflow.replanAttempts}/${this.MAX_REPLAN_ATTEMPTS}`);
 
             try {
-                const tabId = targetStep.params?.tabId || Array.from(global.userTabsMap.keys())[0];
-                const page = global.userTabsMap.get(tabId)?.playwrightPage;
+                const tabId = targetStep.params?.tabId || Array.from(browserManager.userTabs.keys())[0];
+                const page = browserManager.getPage(tabId);
                 let failureShot = null;
                 if (page) {
                     failureShot = await page.screenshot({ encoding: 'base64' }).catch(e => {

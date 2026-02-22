@@ -1,6 +1,53 @@
 // constants.js
 // Central place for system-wide constants like SYSTEM_PROMPT, ACTION_SCHEMA,
-// PLANNER_PROMPT (for AgentReasoner multi-step planning), and REPAIR_PROMPT.
+// PLANNER_PROMPT (for AgentReasoner multi-step planning), REPAIR_PROMPT,
+// and INTENT_DISPATCHER_PROMPT (for the Hybrid Intent System).
+
+/**
+ * INTENT_DISPATCHER_PROMPT — Used by IntentDispatcher.js (Stage 2: LLM classification)
+ *
+ * Classifies user input into exactly ONE of three intents.
+ * This is the CORE of the Fellou.ai-style Hybrid Intent System.
+ */
+export const INTENT_DISPATCHER_PROMPT = `
+You are the intent classifier for VeriBrowse, an AI-powered browser automation agent.
+Given a user message, classify it into exactly ONE of three intents.
+
+## INTENTS
+
+1. **CHAT_INTENT** — The user wants a conversational answer. No browser automation needed.
+   Examples: "hi", "what is React?", "explain quantum computing", "thanks", "who made JavaScript?"
+   For this intent, also provide a helpful response in the "response" field.
+
+2. **QUICK_ACTION** — A single-step browser action: navigate to a URL, click one button, or extract info from the current page.
+   Examples: "go to google", "open youtube.com", "click the login button", "what's the price on this page?"
+   For navigate actions, include the full URL in the "url" field.
+
+3. **LONG_HORIZON_AUTOMATION** — A multi-step task requiring planning, multiple page visits, searching, comparing, or form filling.
+   Examples: "find the cheapest laptop under $500 on amazon", "compare iPhone vs Samsung", "search for AI news and summarize top 3",
+   "fill out the job application on the careers page", "book a flight to New York for next Friday"
+
+## RULES
+
+- If the user asks a question you can answer from training data, classify as CHAT_INTENT.
+- If the user says "go to X" or "open X", classify as QUICK_ACTION with the URL.
+- If the task involves multiple pages, comparisons, or research, classify as LONG_HORIZON_AUTOMATION.
+- If in doubt between QUICK_ACTION and LONG_HORIZON_AUTOMATION, prefer LONG_HORIZON_AUTOMATION.
+- Single-click tasks on the current page CAN be QUICK_ACTION.
+- Always include a confidence_score (0.0-1.0) reflecting how certain you are.
+- Always include a reasoning_summary (1 sentence) explaining your classification.
+
+## RESPONSE FORMAT
+
+Return ONLY valid JSON:
+{
+  "intent_type": "CHAT_INTENT" | "QUICK_ACTION" | "LONG_HORIZON_AUTOMATION",
+  "confidence_score": 0.0-1.0,
+  "reasoning_summary": "Brief explanation",
+  "response": "string or null (for CHAT_INTENT only)",
+  "url": "string or null (for QUICK_ACTION navigate only)"
+}
+`.trim();
 
 export const ACTION_SCHEMA = `
 You must respond with ONE action in this exact JSON format:
@@ -49,8 +96,10 @@ Each step must have this format:
 Planning rules:
 - Generate 3–15 concrete steps. Be specific, not vague.
 - ALWAYS end with a DONE step that summarizes the task result.
-- For CLICK and TYPE steps, use "goalText" to describe what to click/type into (e.g., "Search button", "Email input field"). The executor will resolve this to a CSS selector locally.
-- Only use "selector" if you can see the exact CSS selector in the interactive elements list.
+- VISUAL GROUNDING: The screenshot is marked with numeric labels like [1], [2], [3] for interactive elements.
+- If you see a numeric label on an element you want to interact with, you can use that label as the selector, for example: "selector": "[5]". 
+- For CLICK and TYPE steps, if you don't use a numeric [N] selector, use "goalText" to describe the element (e.g., "Search button"). The executor will resolve this to a CSS selector locally.
+- Only use "selector" (other than [N] labels) if you can see the exact CSS selector in the interactive elements list.
 - If the task requires navigating to a URL, start with a NAVIGATE step.
 - After typing in a search field, add a CLICK or PRESS_ENTER step to submit.
 - If the current page already shows the needed info, skip navigation — just EXTRACT and DONE.
@@ -97,8 +146,11 @@ At each step you receive:
 
 Your job is to decide the SINGLE best next action.
 
-Visual Grounding Rules:
-- When a screenshot is provided, USE IT to verify which elements are actually visible and where they are on screen.
+Visual Grounding (Set-of-Marks):
+- Interactive elements on the screenshot are marked with numeric labels: [1], [2], [3], etc.
+- If you see a numeric label over an element you want to interact with, use that label as your selector (e.g., "selector": "[5]").
+- These labels are high-contrast and placed at the top-left of interactive elements.
+- Use the screenshot to verify which elements are actually visible and where they are on screen.
 - If the DOM list says an element exists but you cannot see it in the screenshot, it may be occluded or off-screen — scroll first.
 - For canvas-rendered content, overlays, or iframes, rely on the screenshot rather than DOM selectors.
 

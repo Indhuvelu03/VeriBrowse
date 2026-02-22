@@ -90,7 +90,7 @@ function lruKey(domain, goal) {
 /**
  * Derive a human-readable skill name from the goal.
  */
-function deriveSkillName(goal) {
+export function deriveSkillName(goal) {
     // Take first 60 chars of the goal, replace non-alphanumeric with dashes
     return (goal || 'unnamed')
         .slice(0, 60)

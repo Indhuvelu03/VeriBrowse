@@ -1,22 +1,36 @@
 /**
- * stateSync.js
+ * StateSync.js
  *
- * Real-time State Sync between Playwright pages and Electron BrowserViews.
+ * Event-driven state synchronisation between Playwright pages and the renderer tab bar.
  *
- * Attaches event listeners to every Playwright page so that navigations,
- * title changes, URL changes, and loading states are automatically mirrored
- * to the corresponding Electron BrowserView and the renderer tab bar.
+ * Replaces the old polling-based approach with Playwright's native page events:
+ *   - framenavigated → URL / title update (covers SPA routing AND full navigations)
+ *   - load            → final URL + title after full page load  
+ *   - domcontentloaded→ early isLoading=true signal
+ *   - request / requestfinished / requestfailed → loading spinner control
+ *   - close           → cleanup on page destruction
+ *
+ * Key improvements over the old code:
+ *   1. Uses BrowserManager singleton instead of global.* — no race conditions.
+ *   2. Deduplicated framenavigated + load notifications via _lastEmittedUrl tracking.
+ *   3. Debounced request-counter spinner to avoid flicker on multi-request pages.
+ *   4. WebContentsView sync is done only for user tabs with an existing view;
+ *      shadow tabs are silently skipped.
  *
  * Usage:
- *   import { attachStateSync } from './stateSync.js';
+ *   import { attachStateSync } from './StateSync.js';
  *   attachStateSync(playwrightPage, tabId);
  *
  * ZERO LLM calls.
  */
 
+import browserManager from './BrowserManager.js';
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
 /**
- * Safely reads the title from a page — returns the URL as fallback
- * if the execution context was destroyed mid-navigation.
+ * Safely reads page.title() — returns URL as fallback if the execution
+ * context is destroyed mid-navigation.
  */
 async function safeTitle(page) {
     try {
@@ -27,34 +41,35 @@ async function safeTitle(page) {
 }
 
 /**
- * Sends a tab-updated IPC event to the renderer process.
+ * Push a tab-updated event to the renderer via BrowserManager.
  */
 function notifyRenderer(tabId, payload) {
-    if (global.mainWindow && !global.mainWindow.isDestroyed()) {
-        global.mainWindow.webContents.send('browser:user-tab-updated', {
-            tabId,
-            ...payload,
-        });
-    }
+    const isShadow = tabId.startsWith('shadow-');
+    const channel = isShadow ? 'browser:shadow-tab-updated' : 'browser:user-tab-updated';
+    browserManager.sendToRenderer(channel, { tabId, ...payload });
 }
 
 /**
- * Loads a URL in the Electron BrowserView tied to this tab, if one exists.
- * Silently ignores failures (the view may not exist yet for shadow tabs).
+ * Synchronise the Electron WebContentsView URL for the given tab.
+ * Only acts if a view already exists; never creates one.
+ * Shadow tabs have no view — this no-ops silently for them.
  */
-async function syncBrowserView(tabId, url) {
-    const view = global.ensureBrowserView?.(tabId);
-    if (view && !view.webContents.isDestroyed()) {
-        try {
+async function syncView(tabId, url) {
+    try {
+        const entry = browserManager.userTabs.get(tabId);
+        const view = entry?.electronBrowserView;
+        if (view && !view.webContents.isDestroyed()) {
             await view.webContents.loadURL(url);
-        } catch (e) {
-            console.warn(`[StateSync] BrowserView loadURL failed for ${tabId}: ${e.message}`);
         }
+    } catch (e) {
+        console.warn(`[StateSync:${tabId}] WebContentsView sync failed: ${e.message}`);
     }
 }
 
+// ─── Core ──────────────────────────────────────────────────────────────────
+
 /**
- * Attach real-time state sync listeners to a Playwright page.
+ * Attach event-driven state sync to a Playwright page.
  * Safe to call multiple times — guards against double-attach.
  *
  * @param {import('playwright').Page} page
@@ -67,9 +82,16 @@ export function attachStateSync(page, tabId) {
 
     const tag = `[StateSync:${tabId}]`;
 
-    // ── framenavigated: fires after every same-page or cross-origin navigation ──
+    // Track the last URL we emitted to avoid duplicate renderer updates
+    // when both 'framenavigated' and 'load' fire for the same navigation.
+    let _lastEmittedUrl = null;
+
+    // Request counter for the loading spinner
+    let _activeRequests = 0;
+    let _spinnerTimer = null;
+
+    // ── framenavigated: fires after every navigation (SPA-friendly) ──────────
     page.on('framenavigated', async (frame) => {
-        // Only react to the main frame
         if (frame !== page.mainFrame()) return;
 
         const url = page.url();
@@ -77,72 +99,95 @@ export function attachStateSync(page, tabId) {
 
         console.log(`${tag} framenavigated → ${url}`);
 
-        syncBrowserView(tabId, url);
+        // Sync the Electron view only if the URL actually changed
+        if (url !== _lastEmittedUrl) {
+            syncView(tabId, url);
+            _lastEmittedUrl = url;
+        }
+
         notifyRenderer(tabId, { url, title, isLoading: false });
+
+        // Update BrowserManager's in-memory tab entry
+        const isShadow = tabId.startsWith('shadow-');
+        const map = isShadow ? browserManager.shadowTabs : browserManager.userTabs;
+        const existing = map.get(tabId);
+        if (existing) {
+            map.set(tabId, { ...existing, url, title });
+        }
     });
 
-    // ── load: reliable "page fully loaded" signal ──
+    // ── load: reliable "page fully loaded" signal ─────────────────────────────
     page.on('load', async () => {
         const url = page.url();
         const title = await safeTitle(page);
 
         console.log(`${tag} load → ${url}`);
 
-        syncBrowserView(tabId, url);
+        // Deduplicate with framenavigated (they often fire within ms of each other)
+        if (url !== _lastEmittedUrl) {
+            syncView(tabId, url);
+            _lastEmittedUrl = url;
+        }
+
         notifyRenderer(tabId, { url, title, isLoading: false });
+
+        const isShadow = tabId.startsWith('shadow-');
+        const map = isShadow ? browserManager.shadowTabs : browserManager.userTabs;
+        const existing = map.get(tabId);
+        if (existing) {
+            map.set(tabId, { ...existing, url, title });
+        }
     });
 
-    // ── domcontentloaded: early "DOM ready" signal ──
+    // ── domcontentloaded: early "loading" signal ──────────────────────────────
     page.on('domcontentloaded', async () => {
         const url = page.url();
         console.log(`${tag} domcontentloaded → ${url}`);
-
         notifyRenderer(tabId, { url, isLoading: true });
     });
 
-    // ── Request tracking: show loading spinner while fetching ──
-    let activeRequests = 0;
-
+    // ── Request tracking: spinner management ──────────────────────────────────
+    // We debounce the "done" notification by 100ms to prevent flicker
+    // when multiple resources finish near-simultaneously.
     page.on('request', () => {
-        if (activeRequests === 0) {
+        _activeRequests++;
+        if (_activeRequests === 1) {
             notifyRenderer(tabId, { isLoading: true });
         }
-        activeRequests++;
     });
 
-    page.on('requestfinished', async () => {
-        activeRequests = Math.max(0, activeRequests - 1);
-        if (activeRequests === 0) {
-            const url = page.url();
-            const title = await safeTitle(page);
-            notifyRenderer(tabId, { url, title, isLoading: false });
+    function onRequestDone() {
+        _activeRequests = Math.max(0, _activeRequests - 1);
+        if (_activeRequests === 0) {
+            clearTimeout(_spinnerTimer);
+            _spinnerTimer = setTimeout(async () => {
+                const url = page.url();
+                const title = await safeTitle(page);
+                notifyRenderer(tabId, { url, title, isLoading: false });
+            }, 100);
         }
-    });
+    }
 
-    page.on('requestfailed', () => {
-        activeRequests = Math.max(0, activeRequests - 1);
-        if (activeRequests === 0) {
-            notifyRenderer(tabId, { isLoading: false });
-        }
-    });
+    page.on('requestfinished', onRequestDone);
+    page.on('requestfailed', onRequestDone);
 
-    // ── close: clean up when the Playwright page is destroyed ──
+    // ── close: cleanup ────────────────────────────────────────────────────────
     page.on('close', () => {
+        clearTimeout(_spinnerTimer);
         console.log(`${tag} Page closed.`);
         notifyRenderer(tabId, { isLoading: false });
     });
 
-    console.log(`${tag} State sync listeners attached.`);
+    console.log(`${tag} Event-driven state sync attached.`);
 }
 
 /**
- * Convenience: attach state sync to ALL currently registered user tabs.
- * Call once after Playwright context is ready and userTabsMap is populated.
+ * Attach state sync to ALL currently registered user tabs.
+ * Called by BrowserManager.init() once Playwright is ready.
  */
 export function attachStateSyncToAllTabs() {
-    if (!global.userTabsMap) return;
-    for (const [tabId, entry] of global.userTabsMap.entries()) {
-        if (entry.playwrightPage) {
+    for (const [tabId, entry] of browserManager.userTabs) {
+        if (entry.playwrightPage && !entry.playwrightPage.isClosed()) {
             attachStateSync(entry.playwrightPage, tabId);
         }
     }

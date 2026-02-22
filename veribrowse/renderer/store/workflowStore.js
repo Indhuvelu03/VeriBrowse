@@ -7,6 +7,13 @@ import { persist } from 'zustand/middleware';
  * Manages sessions, agent execution, steps, and history.
  */
 
+// Renderer-side debounce: prevents rapid double-submit from keyboard repeat
+// or impatient double-click. The primary guard is IPCGuard on the main process,
+// but this second layer avoids unnecessary IPC spam entirely.
+const SUBMIT_DEBOUNCE_MS = 500;
+let _lastSubmitAt = 0;
+
+
 export const useWorkflowStore = create(
     persist(
         (set, get) => ({
@@ -68,6 +75,19 @@ export const useWorkflowStore = create(
             },
 
             startWorkflow: (goal, mode = 'refine') => {
+                // ── Renderer-side debounce ──────────────────────────────────
+                const now = Date.now();
+                if (now - _lastSubmitAt < SUBMIT_DEBOUNCE_MS) {
+                    console.warn('[workflowStore] startWorkflow debounced — too soon after last submit.');
+                    return;
+                }
+                if (get().isRunning) {
+                    console.warn('[workflowStore] startWorkflow blocked — agent already running.');
+                    return;
+                }
+                _lastSubmitAt = now;
+                // ───────────────────────────────────────────────────────────
+
                 if (!get().activeSessionId) {
                     get().newSession();
                 }
