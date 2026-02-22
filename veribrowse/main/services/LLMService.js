@@ -43,13 +43,19 @@ export async function generate(prompt, options = {}) {
 
 export async function vision(prompt, base64PNG) {
     return withRetry(async () => {
+        // Ensure we have a raw base64 string (no data:image/png;base64, prefix)
+        let cleanBase64 = typeof base64PNG === 'string' ? base64PNG : '';
+        if (cleanBase64.includes(';base64,')) {
+            cleanBase64 = cleanBase64.split(';base64,')[1];
+        }
+
         const model = getModel();
         const result = await model.generateContent([
-            prompt,
+            { text: prompt },
             {
                 inlineData: {
                     mimeType: 'image/png',
-                    data: base64PNG,
+                    data: cleanBase64,
                 },
             },
         ]);

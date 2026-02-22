@@ -40,7 +40,8 @@ export const Intents = Object.freeze({
 const GREETING_PATTERNS = /^(hi|hello|hey|hola|yo|what's up|sup|good (morning|afternoon|evening)|thanks|thank you|bye|goodbye|ok|okay|sure|got it|cool)\b/i;
 const NAVIGATE_PATTERNS = /^(go to|open|visit|navigate to|take me to|show me)\s+/i;
 const URL_PATTERN = /^(https?:\/\/|www\.)/i;
-const KNOWLEDGE_PATTERNS = /^(what is|what are|who is|explain|define|how does|when was|where is|tell me about|describe)\b/i;
+// Covers clean phrasing + common typos (wht, wat, wot, whos, hw, etc.)
+const KNOWLEDGE_PATTERNS = /^(wh[aeiout]+'?s?|wh[aeiout]+\s+(is|are|was|were|does|do|did|made|called)|who\s+(is|are|was)|explain|define|how\s+(does|do|did|is|are|was)|when\s+(was|did|is)|where\s+(is|are|was)|tell\s+me\s+about|describe|what\s+is|what\s+are|what'?s)\b/i;
 
 // Research / multi-step task keywords
 const LONG_HORIZON_KEYWORDS = [
@@ -122,8 +123,19 @@ function heuristicClassify(input) {
     if (KNOWLEDGE_PATTERNS.test(lower) && lower.length < 200 && !hasLongHorizonKeyword(lower)) {
         return {
             intent_type: Intents.CHAT,
-            confidence_score: 0.80, // lower confidence — let LLM confirm
+            confidence_score: 0.95, // high confidence — answer from LLM knowledge, no browsing needed
             reasoning_summary: 'Appears to be a knowledge question',
+            response: null,
+            url: null,
+        };
+    }
+
+    // 4b. Short question ending with "?" — very likely factual/conversational
+    if (lower.endsWith('?') && lower.length < 120 && !hasLongHorizonKeyword(lower)) {
+        return {
+            intent_type: Intents.CHAT,
+            confidence_score: 0.90,
+            reasoning_summary: 'Short question — answerable without browsing',
             response: null,
             url: null,
         };

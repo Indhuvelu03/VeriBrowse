@@ -168,9 +168,8 @@ export default function useIPCListeners() {
         api.on('agent:autonomous-done', ({ result }) => {
             updateStatus({ status: 'idle', message: 'Ready' });
             useWorkflowStore.setState({ isRunning: false, agentStatus: 'idle' });
-            if (result?.result) {
-                setSummary(result.result);
-            }
+            // NOTE: do NOT call setSummary here — agent:execution-step DONE already set it.
+            // Calling setSummary again would duplicate the completion message in the chat.
         });
 
         // --- CREDIT EVENTS ---

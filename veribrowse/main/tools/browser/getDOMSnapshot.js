@@ -8,60 +8,86 @@
  * Removes zero-width spaces, joiners, direction overrides, and other non-printing chars.
  */
 function sanitizeText(raw) {
-    if (!raw) return '';
-    return raw
-        // Zero-width & invisible formatting characters
-        .replace(/[\u200B-\u200F\u2028-\u202F\uFEFF\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180E\u2000-\u200A\u2060-\u2064\u2066-\u206F]/g, '')
-        // Control characters except normal whitespace (tab, newline, carriage return)
-        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-        .trim();
+  if (!raw) return '';
+  return raw
+    // Zero-width & invisible formatting characters
+    .replace(/[\u200B-\u200F\u2028-\u202F\uFEFF\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180E\u2000-\u200A\u2060-\u2064\u2066-\u206F]/g, '')
+    // Control characters except normal whitespace (tab, newline, carriage return)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .trim();
 }
 
 export default async function getDOMSnapshot(page) {
+  // IMPORTANT: The function body passed to page.evaluate() is serialised to a string
+  // and evaluated inside the browser page — the webpack/Electron runtime is NOT available
+  // there. Babel/core-js3 transforms String.prototype.trim() into a polyfill import
+  // (_babel_runtime_corejs3_core_js_stable_instance_trim__WEBPACK_IMPORTED_MODULE_0___default)
+  // which causes a ReferenceError in the browser context.
+  // Fix: define a trim helper inside the evaluate scope using regex, which Babel leaves alone.
   const rawSnapshot = await page.evaluate(() => {
+    // Safe trim — never polyfilled by Babel because it's a plain regex replace
+    function tr(s) { return s ? s.replace(/^\s+|\s+$/g, '') : ''; }
+
+    // Safe selector builder — avoids chained prototype methods that Babel might polyfill
+    function buildSelector(el) {
+      if (el.id) return '#' + el.id;
+      if (el.className && typeof el.className === 'string' && tr(el.className)) {
+        var cls = el.className.replace(/^\s+|\s+$/g, '').replace(/\s+/g, '.');
+        return '.' + cls;
+      }
+      return el.tagName.toLowerCase();
+    }
+
     // Helper: get visible text
     function getVisibleText() {
-      let text = '';
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      let node;
+      var text = '';
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      var node;
       while ((node = walker.nextNode())) {
         if (node.parentElement && node.parentElement.offsetParent !== null) {
-          text += node.textContent.trim() + ' ';
+          text += tr(node.textContent) + ' ';
         }
       }
-      return text.trim();
+      return tr(text);
     }
 
     // Helper: get interactive elements
     function getInteractiveElements() {
-      const elements = [];
-      const selectors = 'a, button, input, select, textarea, [role], [onclick], [tabindex]';
-      document.querySelectorAll(selectors).forEach((el, i) => {
-        const rect = el.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) return;
+      var elements = [];
+      var selectors = 'a, button, input, select, textarea, [role], [onclick], [tabindex]';
+      var all = document.querySelectorAll(selectors);
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        var rect = el.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) continue;
+        var rawText = el.innerText || el.value || el.placeholder || '';
         elements.push({
           index: i,
           role: el.getAttribute('role') || el.tagName.toLowerCase(),
-          text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 50),
-          selector: el.id ? `#${el.id}` : el.className ? `.${el.className.split(' ').join('.')}` : el.tagName.toLowerCase(),
+          text: tr(rawText).substring(0, 50),
+          selector: buildSelector(el),
           position: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
           visible: el.offsetParent !== null
         });
-      });
+      }
       return elements;
     }
 
     // Helper: get overlays
     function getOverlays() {
-      return Array.from(document.querySelectorAll('[role="dialog"], .modal, .popup')).map(el => {
-        const rect = el.getBoundingClientRect();
-        return {
-          selector: el.id ? `#${el.id}` : el.className ? `.${el.className.split(' ').join('.')}` : el.tagName.toLowerCase(),
-          text: el.innerText.trim().slice(0, 200),
+      var overlays = [];
+      var all = document.querySelectorAll('[role="dialog"], .modal, .popup');
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        var rect = el.getBoundingClientRect();
+        overlays.push({
+          selector: buildSelector(el),
+          text: tr(el.innerText || '').substring(0, 200),
           position: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
           visible: el.offsetParent !== null
-        };
-      });
+        });
+      }
+      return overlays;
     }
 
     // Helper: get scroll position
@@ -70,32 +96,49 @@ export default async function getDOMSnapshot(page) {
     }
 
     // Inputs, buttons, links
-    const inputs = Array.from(document.querySelectorAll('input, textarea')).map(el => ({
-      selector: el.id ? `#${el.id}` : el.className ? `.${el.className.split(' ').join('.')}` : el.tagName.toLowerCase(),
-      value: (el.value || '').slice(0, 100),
-      placeholder: (el.placeholder || '').slice(0, 80),
-      visible: el.offsetParent !== null
-    }));
-    const buttons = Array.from(document.querySelectorAll('button')).map(el => ({
-      selector: el.id ? `#${el.id}` : el.className ? `.${el.className.split(' ').join('.')}` : el.tagName.toLowerCase(),
-      text: el.innerText.trim().slice(0, 50),
-      visible: el.offsetParent !== null
-    }));
-    const links = Array.from(document.querySelectorAll('a')).map(el => ({
-      selector: el.id ? `#${el.id}` : el.className ? `.${el.className.split(' ').join('.')}` : el.tagName.toLowerCase(),
-      href: el.href,
-      text: el.innerText.trim().slice(0, 50),
-      visible: el.offsetParent !== null
-    }));
+    var inputEls = document.querySelectorAll('input, textarea');
+    var inputs = [];
+    for (var i = 0; i < inputEls.length; i++) {
+      var el = inputEls[i];
+      inputs.push({
+        selector: buildSelector(el),
+        value: (el.value || '').substring(0, 100),
+        placeholder: (el.placeholder || '').substring(0, 80),
+        visible: el.offsetParent !== null
+      });
+    }
+
+    var buttonEls = document.querySelectorAll('button');
+    var buttons = [];
+    for (var j = 0; j < buttonEls.length; j++) {
+      var elBtn = buttonEls[j];
+      buttons.push({
+        selector: buildSelector(elBtn),
+        text: tr(elBtn.innerText || '').substring(0, 50),
+        visible: elBtn.offsetParent !== null
+      });
+    }
+
+    var linkEls = document.querySelectorAll('a');
+    var links = [];
+    for (var k = 0; k < linkEls.length; k++) {
+      var elLink = linkEls[k];
+      links.push({
+        selector: buildSelector(elLink),
+        href: elLink.href,
+        text: tr(elLink.innerText || '').substring(0, 50),
+        visible: elLink.offsetParent !== null
+      });
+    }
 
     return {
       url: location.href,
       title: document.title,
       visibleText: getVisibleText(),
       interactiveElements: getInteractiveElements(),
-      inputs,
-      buttons,
-      links,
+      inputs: inputs,
+      buttons: buttons,
+      links: links,
       overlays: getOverlays(),
       scrollPosition: getScrollPosition()
     };

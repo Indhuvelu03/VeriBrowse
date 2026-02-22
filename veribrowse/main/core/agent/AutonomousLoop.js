@@ -107,17 +107,34 @@ function getDomain(url) {
 
 /**
  * Take a screenshot with visual grounding labels.
+ * Returns null screenshot for blank/empty pages to avoid invalid image errors in Gemini.
  */
 async function captureMarkedScreenshot(page) {
     try {
+        // Skip screenshot for about:blank / unloaded pages — Gemini rejects blank images
+        const currentUrl = page.url();
+        if (!currentUrl || currentUrl === 'about:blank' || currentUrl === 'about:newtab') {
+            return { screenshot: null, groundingMap: null };
+        }
+
         const groundingMap = await markPage(page);
         const screenshot = await page.screenshot({ encoding: 'base64' });
         await unmarkPage(page);
+
+        // Guard: if base64 is suspiciously small it's a blank/invalid frame — skip vision
+        if (!screenshot || screenshot.length < 1500) {
+            return { screenshot: null, groundingMap: null };
+        }
+
         return { screenshot, groundingMap };
     } catch (e) {
         console.warn('[AutonomousLoop] Visual grounding failed:', e.message);
         await unmarkPage(page).catch(() => { });
         const screenshot = await page.screenshot({ encoding: 'base64' }).catch(() => null);
+        // Same size guard on fallback path
+        if (!screenshot || screenshot.length < 1500) {
+            return { screenshot: null, groundingMap: null };
+        }
         return { screenshot, groundingMap: null };
     }
 }

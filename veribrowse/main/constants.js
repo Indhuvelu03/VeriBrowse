@@ -15,8 +15,11 @@ Given a user message, classify it into exactly ONE of three intents.
 
 ## INTENTS
 
-1. **CHAT_INTENT** — The user wants a conversational answer. No browser automation needed.
-   Examples: "hi", "what is React?", "explain quantum computing", "thanks", "who made JavaScript?"
+1. **CHAT_INTENT** — The user wants a conversational answer you can generate directly from knowledge. No browser automation needed.
+   Examples: "hi", "what is React?", "what is electron?", "wht is electron", "explain quantum computing",
+   "thanks", "who made JavaScript?", "how does TCP/IP work?", "what's the difference between RAM and ROM?",
+   "tell me about photosynthesis", "who is Elon Musk?", "define recursion", "how does an atom work?"
+   ⚠️ IMPORTANT: ANY factual question about a concept, person, technology, or topic = CHAT_INTENT.
    For this intent, also provide a helpful response in the "response" field.
 
 2. **QUICK_ACTION** — A single-step browser action: navigate to a URL, click one button, or extract info from the current page.
@@ -29,9 +32,11 @@ Given a user message, classify it into exactly ONE of three intents.
 
 ## RULES
 
-- If the user asks a question you can answer from training data, classify as CHAT_INTENT.
-- If the user says "go to X" or "open X", classify as QUICK_ACTION with the URL.
-- If the task involves multiple pages, comparisons, or research, classify as LONG_HORIZON_AUTOMATION.
+- ✅ MOST IMPORTANT: If the user's message starts with "what is", "what are", "who is", "explain", "define", "how does", "tell me about", "describe" — classify as CHAT_INTENT immediately, even with typos.
+- ✅ If you can answer the question purely from knowledge (no need to open a browser) — classify as CHAT_INTENT.
+- ✅ If the user says "go to X" or "open X", classify as QUICK_ACTION with the URL.
+- ✅ If the task involves multiple pages, comparisons, or research — classify as LONG_HORIZON_AUTOMATION.
+- ❌ Do NOT classify factual knowledge questions as LONG_HORIZON_AUTOMATION just because the answer could be found on a website. Answer it directly.
 - If in doubt between QUICK_ACTION and LONG_HORIZON_AUTOMATION, prefer LONG_HORIZON_AUTOMATION.
 - Single-click tasks on the current page CAN be QUICK_ACTION.
 - Always include a confidence_score (0.0-1.0) reflecting how certain you are.

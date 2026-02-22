@@ -39,11 +39,16 @@ export default async function click(page, { selector, text }) {
         // Strategy 3: JavaScript Force Click (Last resort)
         if (text) {
             const found = await page.evaluate((t) => {
-                const elements = Array.from(document.querySelectorAll('button, a, div, span, li'));
-                const match = elements.find(el => el.innerText.trim().toLowerCase().includes(t.toLowerCase()));
-                if (match) {
-                    match.click();
-                    return true;
+                // Use regex-based helpers — Babel polyfills .trim()/.toLowerCase() which breaks eval
+                var target = t.replace(/^\s+|\s+$/g, '').toLowerCase();
+                var els = document.querySelectorAll('button, a, div, span, li');
+                for (var i = 0; i < els.length; i++) {
+                    var el = els[i];
+                    var content = (el.innerText || '').replace(/^\s+|\s+$/g, '').toLowerCase();
+                    if (content.indexOf(target) !== -1) {
+                        el.click();
+                        return true;
+                    }
                 }
                 return false;
             }, text);

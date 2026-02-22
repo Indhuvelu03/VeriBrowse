@@ -48,10 +48,12 @@ export default async function waitForSelector(page, params = {}) {
             console.log(`[Tool:WaitForSelector] Waiting for text "${text}" (timeout: ${timeout}ms)`);
             await page.waitForFunction(
                 (t) => {
-                    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-                    let node;
+                    // Use indexOf instead of .includes() and avoid .toLowerCase() polyfill
+                    var tLow = t.toLowerCase();
+                    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+                    var node;
                     while ((node = walker.nextNode())) {
-                        if (node.textContent.toLowerCase().includes(t.toLowerCase())) return true;
+                        if (node.textContent.toLowerCase().indexOf(tLow) !== -1) return true;
                     }
                     return false;
                 },

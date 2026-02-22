@@ -11,40 +11,55 @@ export default async function extract(page, { includeLinks = true }) {
 
     const data = await page.evaluate((shouldLinks) => {
       // 1. Remove noise
-      const noiseSelectors = [
+      var noiseSelectors = [
         'nav', 'footer', 'header', 'script', 'style', 'noscript', 'iframe',
         'aside', '.ads', '.ad-unit', '#consent-banner', '.cookie-notice',
         '.social-share', '.sidebar'
       ];
-
       const clone = document.body.cloneNode(true);
-      noiseSelectors.forEach(s => {
-        clone.querySelectorAll(s).forEach(el => el.remove());
-      });
+      for (var i = 0; i < noiseSelectors.length; i++) {
+        var s = noiseSelectors[i];
+        var noisy = clone.querySelectorAll(s);
+        for (var j = 0; j < noisy.length; j++) {
+          noisy[j].remove();
+        }
+      }
 
       // 2. Extract meaningful text
-      const text = clone.innerText
-        .split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length > 0)
-        .join('\n');
+      // Use regex-based trim — Babel polyfills .trim()/.join()/.split() breaking eval
+      var rawLines = clone.innerText.split('\n');
+      var cleanLines = [];
+      for (var k = 0; k < rawLines.length; k++) {
+        var line = rawLines[k].replace(/^\s+|\s+$/g, '');
+        if (line.length > 0) cleanLines.push(line);
+      }
+      var text = cleanLines.join('\n');
 
       // 3. Extract links (if requested)
-      let links = [];
+      var links = [];
       if (shouldLinks) {
-        links = Array.from(clone.querySelectorAll('a[href]'))
-          .map(a => ({
-            text: a.innerText.trim(),
-            url: a.href
-          }))
-          .filter(l => l.text.length > 2 && l.url.startsWith('http'))
-          .slice(0, 50); // Cap at 50 links for context efficiency
+        var aEls = clone.querySelectorAll('a[href]');
+        for (var l = 0; l < aEls.length; l++) {
+          var a = aEls[l];
+          var aText = (a.innerText || '').replace(/^\s+|\s+$/g, '');
+          var aUrl = a.href || '';
+          if (aText.length > 2 && aUrl.indexOf('http') === 0) {
+            links.push({ text: aText, url: aUrl });
+          }
+          if (links.length >= 50) break;
+        }
+      }
+
+      var wordCount = 0;
+      var wordParts = text.split(/\s+/);
+      for (var wi = 0; wi < wordParts.length; wi++) {
+        if (wordParts[wi].length > 0) wordCount++;
       }
 
       return {
-        text: text.slice(0, 50000), // Safety cap for massive pages
-        links,
-        wordCount: text.split(/\s+/).length
+        text: text.substring(0, 50000),
+        links: links,
+        wordCount: wordCount
       };
     }, includeLinks);
 

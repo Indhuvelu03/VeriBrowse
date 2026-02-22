@@ -47,15 +47,23 @@ export default async function executeAction(action, page) {
             // Attempt 3: JS force-click by text content
             if (!clicked && action.text) {
                 const found = await page.evaluate((t) => {
-                    const els = Array.from(document.querySelectorAll('button, a, div, span, li, [role="button"]'));
-                    const m = els.find(el => el.innerText?.trim().toLowerCase().includes(t.toLowerCase()));
-                    if (m) { m.click(); return true; }
+                    var els = document.querySelectorAll('button, a, div, span, li, [role="button"]');
+                    // Use a plain regex trim + toLowerCase equivalent so Babel doesn't polyfill
+                    var target = t.replace(/^\s+|\s+$/g, '').toLowerCase();
+                    for (var i = 0; i < els.length; i++) {
+                        var el = els[i];
+                        var content = (el.innerText || '').replace(/^\s+|\s+$/g, '').toLowerCase();
+                        if (content.indexOf(target) !== -1) {
+                            el.click();
+                            return true;
+                        }
+                    }
                     return false;
                 }, action.text);
                 if (!found) throw new Error(`CLICK failed — no element matched selector "${action.selector}" or text "${action.text}"`);
             }
             // Post-click: wait for potential navigation
-            await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
+            await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => { });
             await page.waitForTimeout(rand(300, 700));
             break;
         }
@@ -64,7 +72,7 @@ export default async function executeAction(action, page) {
         case 'TYPE': {
             const sel = action.selector;
             if (sel) {
-                await page.waitForSelector(sel, { state: 'visible', timeout: 5000 }).catch(() => {});
+                await page.waitForSelector(sel, { state: 'visible', timeout: 5000 }).catch(() => { });
                 // Focus + clear
                 try {
                     await page.click(sel, { timeout: 3000 });
@@ -85,7 +93,7 @@ export default async function executeAction(action, page) {
             // If text ends with \n, press Enter
             if (action.text.endsWith('\n') || action.pressEnter) {
                 await page.keyboard.press('Enter');
-                await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {});
+                await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => { });
                 await page.waitForTimeout(rand(800, 1500));
             }
             break;
@@ -113,7 +121,7 @@ export default async function executeAction(action, page) {
             } catch (e) {
                 console.warn('[executeAction:NAVIGATE] Timeout — continuing:', e.message);
             }
-            await page.waitForLoadState('domcontentloaded').catch(() => {});
+            await page.waitForLoadState('domcontentloaded').catch(() => { });
             await page.waitForTimeout(rand(800, 1500));
             break;
         }
@@ -133,7 +141,7 @@ export default async function executeAction(action, page) {
         // ── PRESS_ENTER (convenience) ──────────────────────────────────
         case 'PRESS_ENTER': {
             await page.keyboard.press('Enter');
-            await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
+            await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => { });
             await page.waitForTimeout(rand(500, 1000));
             break;
         }
