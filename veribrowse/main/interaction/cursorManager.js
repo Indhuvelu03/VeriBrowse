@@ -153,7 +153,7 @@ export async function initCursor(page) {
         if (!url || url === 'about:blank' || url === 'about:newtab') return;
 
         // Wait for body to exist — Amazon and SPAs can take a while
-        await page.waitForSelector('body', { state: 'attached', timeout: 8000 }).catch(() => {});
+        await page.waitForSelector('body', { state: 'attached', timeout: 8000 }).catch(() => { });
 
         await page.evaluate(CURSOR_INJECT_SCRIPT);
     } catch (e) {

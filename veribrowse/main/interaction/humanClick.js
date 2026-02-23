@@ -182,7 +182,7 @@ export async function humanClickElement(page, selector, fallbackText, options = 
             if (found) {
                 await humanClickAt(page, x, y, options);
                 // Wait for potential navigation after click
-                await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
+                await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => { });
                 return { success: true, method: 'selector+human-cursor' };
             }
         } catch (e) {
@@ -210,7 +210,7 @@ export async function humanClickElement(page, selector, fallbackText, options = 
                 const x = Math.round(box.x + box.width / 2 + jitter.dx);
                 const y = Math.round(box.y + box.height / 2 + jitter.dy);
                 await humanClickAt(page, x, y, options);
-                await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
+                await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => { });
                 return { success: true, method: 'text+human-cursor' };
             }
         } catch (e) {
@@ -254,7 +254,7 @@ export async function resetCursorToCenter(page) {
     try {
         const viewport = page.viewportSize();
         if (viewport) {
-            _cursorX = viewport.width  / 2;
+            _cursorX = viewport.width / 2;
             _cursorY = viewport.height / 2;
             await page.mouse.move(_cursorX, _cursorY);
             await updateCursorPosition(page, _cursorX, _cursorY);

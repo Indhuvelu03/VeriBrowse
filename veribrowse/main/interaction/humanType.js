@@ -156,7 +156,7 @@ export async function humanType(page, selector, text, options = {}) {
         await page.keyboard.press('Enter');
 
         // Wait for potential navigation or AJAX response
-        await page.waitForLoadState('domcontentloaded', { timeout: 12000 }).catch(() => {});
+        await page.waitForLoadState('domcontentloaded', { timeout: 12000 }).catch(() => { });
         await randomDelay(waitAfterEnter * 0.6, waitAfterEnter);
     }
 
@@ -193,6 +193,6 @@ export async function humanClearField(page, selector) {
         await randomDelay(20, 60);
     } catch (e) {
         console.warn(`[HumanType] clearField fallback: ${e.message}`);
-        await page.fill(selector, '').catch(() => {});
+        await page.fill(selector, '').catch(() => { });
     }
 }

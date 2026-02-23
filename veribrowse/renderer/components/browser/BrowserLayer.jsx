@@ -78,7 +78,7 @@ export default function BrowserLayer() {
             observer.disconnect();
             clearTimeout(timeout);
         };
-    }, [activeTabId, agentPanelOpen, activeView, hasUrl, overlayOpen]);
+    }, [activeTabId, agentPanelOpen, activeView, hasUrl, overlayOpen, activeTab?.url]);
 
     // Only render placeholder div when there is a real URL to display
     if (!hasUrl || activeView !== 'browser' || overlayOpen) return null;

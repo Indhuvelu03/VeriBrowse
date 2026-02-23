@@ -33,7 +33,7 @@ export function registerBrowserHandlers() {
                 browserManager.mainWindow?.webContents.send('browser:user-tab-updated', { tabId, url: currentUrl, title, isLoading: false });
 
                 // Persist to history
-                SupabaseService.addHistory(currentUrl, title, null).catch(() => {});
+                SupabaseService.addHistory(currentUrl, title, null).catch(() => { });
             } catch (e) {
                 console.error('[IPC:navigate] Failed:', e.message);
                 browserManager.mainWindow?.webContents.send('browser:user-tab-updated', { tabId, isLoading: false, error: e.message });
@@ -103,14 +103,37 @@ export function registerBrowserHandlers() {
     });
 
     ipcMain.on('browser:resize-viewport', (event, { tabId, bounds }) => {
+        const width = Math.round(bounds.width);
+        const height = Math.round(bounds.height);
+
+        // Calculate a zoom factor to prevent horizontal scrolling on rigid desktop sites.
+        // We assume ~1100px is a safe minimum width for desktop sites before they overflow.
+        let zoomFactor = 1;
+        if (width > 0 && width < 1100) {
+            zoomFactor = width / 1100;
+            if (zoomFactor < 0.3) zoomFactor = 0.3; // Cap at 30% scale
+        }
+
+        // The layout dimensions represents the unzoomed, logical pixel space the website sees
+        const layoutWidth = Math.round(width / zoomFactor);
+        const layoutHeight = Math.round(height / zoomFactor);
+
         const view = browserManager.ensureBrowserView(tabId);
         if (view && !view.webContents.isDestroyed()) {
             view.setBounds({
                 x: Math.round(bounds.x),
                 y: Math.round(bounds.y),
-                width: Math.round(bounds.width),
-                height: Math.round(bounds.height)
+                width,
+                height
             });
+            // Apply zoom factor visually in Electron so it fits nicely
+            view.webContents.setZoomFactor(zoomFactor);
+        }
+
+        const entry = browserManager.userTabs.get(tabId);
+        if (entry && entry.playwrightPage && !entry.playwrightPage.isClosed()) {
+            // Keep Playwright's virtual viewport matching the layout size
+            entry.playwrightPage.setViewportSize({ width: layoutWidth, height: layoutHeight }).catch(() => { });
         }
     });
 

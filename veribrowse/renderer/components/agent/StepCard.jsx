@@ -13,22 +13,22 @@ import {
 //  Action  friendly label + icon 
 
 const ACTION_META = {
-    NAVIGATE:       { icon: Globe,            label: 'Navigating',       color: 'text-sky-400',    bg: 'bg-sky-500/10' },
-    CLICK:          { icon: MousePointerClick, label: 'Clicking',         color: 'text-violet-400', bg: 'bg-violet-500/10' },
-    TYPE:           { icon: Keyboard,         label: 'Typing',           color: 'text-amber-400',  bg: 'bg-amber-500/10' },
-    SCROLL:         { icon: Navigation2,      label: 'Scrolling',        color: 'text-teal-400',   bg: 'bg-teal-500/10' },
-    EXTRACT:        { icon: ScanText,         label: 'Reading page',     color: 'text-emerald-400',bg: 'bg-emerald-500/10' },
-    SEARCH:         { icon: Search,           label: 'Searching',        color: 'text-sky-400',    bg: 'bg-sky-500/10' },
-    PLAN:           { icon: Brain,            label: 'Planning',         color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
-    SKILL_HIT:      { icon: Zap,             label: 'Skill match',      color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
-    REPLAN:         { icon: RefreshCw,        label: 'Adjusting plan',   color: 'text-amber-400',  bg: 'bg-amber-500/10' },
-    DONE:           { icon: CheckCheck,       label: 'Completed',        color: 'text-emerald-400',bg: 'bg-emerald-500/10' },
-    VERIFY:         { icon: Eye,             label: 'Verifying',        color: 'text-teal-400',   bg: 'bg-teal-500/10' },
-    DOWNLOAD:       { icon: Download,         label: 'Downloading',      color: 'text-sky-400',    bg: 'bg-sky-500/10' },
-    FALLBACK:       { icon: ArrowLeft,        label: 'Trying again',     color: 'text-orange-400', bg: 'bg-orange-500/10' },
-    PRESS_ENTER:    { icon: Keyboard,         label: 'Submitting',       color: 'text-amber-400',  bg: 'bg-amber-500/10' },
-    WAIT:           { icon: Loader2,          label: 'Waiting',          color: 'text-gray-400',   bg: 'bg-white/5' },
-    DISMISS_OVERLAY:{ icon: AlertCircle,      label: 'Dismissed popup',  color: 'text-orange-400', bg: 'bg-orange-500/10' },
+    NAVIGATE: { icon: Globe, label: 'Navigating', color: 'text-sky-400', bg: 'bg-sky-500/10' },
+    CLICK: { icon: MousePointerClick, label: 'Clicking', color: 'text-violet-400', bg: 'bg-violet-500/10' },
+    TYPE: { icon: Keyboard, label: 'Typing', color: 'text-amber-400', bg: 'bg-amber-500/10' },
+    SCROLL: { icon: Navigation2, label: 'Scrolling', color: 'text-teal-400', bg: 'bg-teal-500/10' },
+    EXTRACT: { icon: ScanText, label: 'Reading page', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+    SEARCH: { icon: Search, label: 'Searching', color: 'text-sky-400', bg: 'bg-sky-500/10' },
+    PLAN: { icon: Brain, label: 'Planning', color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
+    SKILL_HIT: { icon: Zap, label: 'Skill match', color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
+    REPLAN: { icon: RefreshCw, label: 'Adjusting plan', color: 'text-amber-400', bg: 'bg-amber-500/10' },
+    DONE: { icon: CheckCheck, label: 'Completed', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+    VERIFY: { icon: Eye, label: 'Verifying', color: 'text-teal-400', bg: 'bg-teal-500/10' },
+    DOWNLOAD: { icon: Download, label: 'Downloading', color: 'text-sky-400', bg: 'bg-sky-500/10' },
+    FALLBACK: { icon: ArrowLeft, label: 'Trying again', color: 'text-orange-400', bg: 'bg-orange-500/10' },
+    PRESS_ENTER: { icon: Keyboard, label: 'Submitting', color: 'text-amber-400', bg: 'bg-amber-500/10' },
+    WAIT: { icon: Loader2, label: 'Waiting', color: 'text-gray-400', bg: 'bg-white/5' },
+    DISMISS_OVERLAY: { icon: AlertCircle, label: 'Dismissed popup', color: 'text-orange-400', bg: 'bg-orange-500/10' },
 };
 
 function getActionMeta(step) {
@@ -61,9 +61,9 @@ export default function StepCard({ step, isLast }) {
     const Icon = meta.icon;
 
     const isRunning = step.status === 'running' || step.status === 'executing';
-    const isDone    = step.status === 'done'    || step.status === 'success';
-    const isFailed  = step.status === 'failed'  || step.status === 'fail' || step.status === 'error';
-    const isWarn    = step.status === 'warn';
+    const isDone = step.status === 'done' || step.status === 'success';
+    const isFailed = step.status === 'failed' || step.status === 'fail' || step.status === 'error';
+    const isWarn = step.status === 'warn';
 
     const hasDetail = isDone && (step.result || step.error);
     const displayText = humanize(step.description || step.thought) || meta.label;
@@ -105,9 +105,9 @@ export default function StepCard({ step, isLast }) {
                 <div className="flex items-start gap-1.5">
                     <p className={clsx(
                         'flex-1 text-[13px] leading-snug',
-                        isRunning  ? 'text-white font-medium'   :
-                        isDone     ? 'text-gray-300'            :
-                        isFailed   ? 'text-red-400/80'          : 'text-gray-500'
+                        isRunning ? 'text-white font-medium' :
+                            isDone ? 'text-gray-300' :
+                                isFailed ? 'text-red-400/80' : 'text-gray-500'
                     )}>
                         {displayText}
                     </p>
@@ -130,9 +130,9 @@ export default function StepCard({ step, isLast }) {
                 <p className={clsx(
                     'text-[10px] uppercase tracking-[0.12em] font-semibold mt-0.5',
                     isRunning ? meta.color :
-                    isFailed  ? 'text-red-500/50' :
-                    isWarn    ? 'text-amber-500/50' :
-                    isDone    ? 'text-gray-600'   : 'text-gray-700'
+                        isFailed ? 'text-red-500/50' :
+                            isWarn ? 'text-amber-500/50' :
+                                isDone ? 'text-gray-600' : 'text-gray-700'
                 )}>
                     {isRunning ? meta.label : isDone ? 'done' : isFailed ? 'failed' : isWarn ? 'no effect' : meta.label}
                 </p>

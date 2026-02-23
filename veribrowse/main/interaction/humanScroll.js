@@ -26,9 +26,9 @@ import {
 // ─── Scroll Profiles ─────────────────────────────────────────────────────
 
 const PROFILES = {
-    read: { chunkMin: 50,  chunkMax: 100, stepDelayMin: 40, stepDelayMax: 90,  pauseChance: 0.20 },
-    skim: { chunkMin: 80,  chunkMax: 150, stepDelayMin: 25, stepDelayMax: 60,  pauseChance: 0.10 },
-    fast: { chunkMin: 120, chunkMax: 220, stepDelayMin: 12, stepDelayMax: 30,  pauseChance: 0.05 },
+    read: { chunkMin: 50, chunkMax: 100, stepDelayMin: 40, stepDelayMax: 90, pauseChance: 0.20 },
+    skim: { chunkMin: 80, chunkMax: 150, stepDelayMin: 25, stepDelayMax: 60, pauseChance: 0.10 },
+    fast: { chunkMin: 120, chunkMax: 220, stepDelayMin: 12, stepDelayMax: 30, pauseChance: 0.05 },
 };
 
 // ─── Internal helpers ────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ export async function humanScrollBy(page, amount, direction = 'down', options = 
 
     if (amount === 'full') {
         const maxScroll = await getMaxScroll(page);
-        const current   = await getScrollY(page);
+        const current = await getScrollY(page);
         await humanScroll(page, dir * (maxScroll - current), { profile: 'fast' });
         return;
     }

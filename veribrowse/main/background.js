@@ -38,6 +38,8 @@ import * as AgentRuntime from './core/agent/AgentRuntime.js';
 const isProd = process.env.NODE_ENV === 'production';
 const store = new Store();
 
+app.userAgentFallback = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
 if (isProd) {
   serve({ directory: 'app' });
 } else {
