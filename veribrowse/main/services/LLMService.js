@@ -19,18 +19,36 @@ function getModel() {
     });
 }
 
+function is429(err) {
+    const msg = err?.message || '';
+    return msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('Resource exhausted');
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Retry up to 2 extra times (3 total attempts) with exponential back-off.
+ * 429 rate-limit errors get a longer 10-second cooldown before retrying.
+ */
 async function withRetry(fn) {
-    try {
-        return await fn();
-    } catch (err) {
-        console.warn('[LLMService] Attempt 1 failed, retrying...', err.message);
+    const delays = [2000, 5000]; // ms to wait before attempt 2 and 3
+    let lastErr;
+    for (let attempt = 0; attempt <= 2; attempt++) {
         try {
             return await fn();
-        } catch (retryErr) {
-            console.error('[LLMService] Final attempt failed:', retryErr.message);
-            throw retryErr;
+        } catch (err) {
+            lastErr = err;
+            if (attempt < 2) {
+                const waitMs = is429(err) ? 10000 : delays[attempt];
+                console.warn(`[LLMService] Attempt ${attempt + 1} failed, retrying in ${waitMs}ms...`, err.message);
+                await sleep(waitMs);
+            }
         }
     }
+    console.error('[LLMService] Final attempt failed:', lastErr.message);
+    throw lastErr;
 }
 
 export async function generate(prompt, options = {}) {

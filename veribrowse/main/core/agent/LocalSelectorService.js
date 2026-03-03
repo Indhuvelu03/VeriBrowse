@@ -152,22 +152,28 @@ function heuristicSearch(goalText, snapshot) {
         { keywords: ['close', 'dismiss', 'cancel'], selectors: ['button[aria-label="Close"]', 'button[aria-label="Dismiss"]', '.close-button', '.dismiss'] },
         { keywords: ['menu', 'hamburger', 'nav'], selectors: ['button[aria-label="Menu"]', '[role="navigation"] button', '.hamburger', '.menu-toggle'] },
         { keywords: ['login', 'sign in', 'signin'], selectors: ['a[href*="login"]', 'a[href*="signin"]', 'button:has-text("Sign in")', 'button:has-text("Log in")'] },
+        // Sort/filter dropdowns on e-commerce pages (Amazon, eBay, etc.)
+        { keywords: ['sort', 'sort by', 'featured', 'relevance', 'filter'], selectors: ['.a-dropdown-prompt', '[id*="sort"]', 'span[id$="announce"]', '[aria-label*="sort" i]', 'select[name*="sort" i]'] },
+        // Generic dropdown/combobox
+        { keywords: ['dropdown', 'select', 'option', 'combobox'], selectors: ['[role="combobox"]', '[role="listbox"]', 'select', '[aria-haspopup="listbox"]'] },
     ];
 
     for (const pattern of rolePatterns) {
-        if (pattern.keywords.some(kw => goal.includes(kw))) {
+        if (pattern.keywords.some(kw => goal.includes(kw) || kw.includes(goal))) {
             // Check if any of the pattern's selectors exist in the snapshot
             for (const patSel of pattern.selectors) {
                 for (const el of allElements) {
                     if (el.selector && el.selector.includes(patSel.replace(/"/g, '')) && el.visible !== false) {
                         console.log(`[LocalSelector] Heuristic: role pattern match → "${el.selector}"`);
-                        return { selector: el.selector, fallbackText: el.text, method: 'role-pattern' };
+                        return { selector: el.selector, fallbackText: el.text || goal, method: 'role-pattern' };
                     }
                 }
             }
             // Return the first pattern selector as a "best guess" for Playwright to try
-            console.log(`[LocalSelector] Heuristic: role pattern guess → "${pattern.selectors[0]}"`);
-            return { selector: pattern.selectors[0], fallbackText: null, method: 'role-guess' };
+            // Always include goalText as fallbackText so JS force-click can find by text if CSS fails
+            const matchedKeyword = pattern.keywords.find(kw => goal.includes(kw) || kw.includes(goal)) || goal;
+            console.log(`[LocalSelector] Heuristic: role pattern guess → "${pattern.selectors[0]}" (fallback: "${matchedKeyword}"`);
+            return { selector: pattern.selectors[0], fallbackText: matchedKeyword, method: 'role-guess' };
         }
     }
 

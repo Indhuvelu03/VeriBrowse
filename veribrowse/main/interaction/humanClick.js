@@ -176,7 +176,9 @@ export async function humanClickElement(page, selector, fallbackText, options = 
     // ── Strategy 1: CSS selector + human cursor movement ──
     if (selector) {
         try {
-            await page.waitForSelector(selector, { state: 'visible', timeout: 5000 });
+            // Use a shorter timeout when we have a text fallback — fail fast and let text strategy win
+            const selectorTimeout = fallbackText ? 1500 : 5000;
+            await page.waitForSelector(selector, { state: 'visible', timeout: selectorTimeout });
             const { x, y, found } = await resolveElementCenter(page, selector);
 
             if (found) {
@@ -220,9 +222,29 @@ export async function humanClickElement(page, selector, fallbackText, options = 
         // ── Strategy 3: JavaScript force-click (last resort — no cursor movement) ──
         // Uses string-based page.evaluate() so Babel never polyfills indexOf inside it.
         // Also uses the same cleaned single-line search term.
+        const cleanFallback3 = String(fallbackText)
+            .split('\n')
+            .map(s => s.trim())
+            .filter(s => s.length > 3)
+            .sort((a, b) => b.length - a.length)[0]
+            ?.slice(0, 50) || String(fallbackText).trim().slice(0, 50);
         const jsCode = `(function() {
-            var target = ${JSON.stringify(cleanFallback.toLowerCase())};
-            var els = document.querySelectorAll('button,a,div,span,li,[role="button"],[role="option"]');
+            var target = ${JSON.stringify(cleanFallback3.toLowerCase())};
+            // Try <select> first — for native dropdowns (e.g. Amazon sort)
+            var selects = document.querySelectorAll('select');
+            for (var si = 0; si < selects.length; si++) {
+                var sel = selects[si];
+                var opts = sel.options;
+                for (var oi = 0; oi < opts.length; oi++) {
+                    if ((opts[oi].text || '').toLowerCase().indexOf(target) !== -1) {
+                        sel.value = opts[oi].value;
+                        sel.dispatchEvent(new Event('change', { bubbles: true }));
+                        return true;
+                    }
+                }
+            }
+            // Try clickable elements
+            var els = document.querySelectorAll('button,a,div,span,li,[role="button"],[role="option"],[role="menuitem"]');
             for (var i = 0; i < els.length; i++) {
                 var el = els[i];
                 var content = (el.innerText || '').replace(/^\\s+|\\s+$/g,'').toLowerCase();

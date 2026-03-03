@@ -106,6 +106,18 @@ function getDomain(url) {
 }
 
 /**
+ * Validate that a base64 string looks like a real PNG image.
+ * A valid PNG base64-encodes a file starting with the 8-byte magic: \x89PNG\r\n\x1a\n
+ * In base64 this always starts with 'iVBORw0KGgo'.
+ */
+function isValidScreenshot(b64) {
+    if (!b64 || b64.length < 1500) return false;
+    // Strip data-URI prefix if present
+    const raw = b64.includes(';base64,') ? b64.split(';base64,')[1] : b64;
+    return raw.startsWith('iVBORw0KGgo');
+}
+
+/**
  * Take a screenshot with visual grounding labels.
  * Returns null screenshot for blank/empty pages to avoid invalid image errors in Gemini.
  */
@@ -117,12 +129,16 @@ async function captureMarkedScreenshot(page) {
             return { screenshot: null, groundingMap: null };
         }
 
+        // Wait briefly for the page to settle before screenshotting
+        await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => { });
+
         const groundingMap = await markPage(page);
         const screenshot = await page.screenshot({ encoding: 'base64' });
         await unmarkPage(page);
 
-        // Guard: if base64 is suspiciously small it's a blank/invalid frame — skip vision
-        if (!screenshot || screenshot.length < 1500) {
+        // Guard: validate PNG magic bytes — Gemini rejects blank/partial frames
+        if (!isValidScreenshot(screenshot)) {
+            console.warn('[AutonomousLoop] Screenshot failed PNG magic-byte check — skipping vision');
             return { screenshot: null, groundingMap: null };
         }
 
@@ -131,8 +147,8 @@ async function captureMarkedScreenshot(page) {
         console.warn('[AutonomousLoop] Visual grounding failed:', e.message);
         await unmarkPage(page).catch(() => { });
         const screenshot = await page.screenshot({ encoding: 'base64' }).catch(() => null);
-        // Same size guard on fallback path
-        if (!screenshot || screenshot.length < 1500) {
+        // Same PNG validation on fallback path
+        if (!isValidScreenshot(screenshot)) {
             return { screenshot: null, groundingMap: null };
         }
         return { screenshot, groundingMap: null };
@@ -188,18 +204,36 @@ async function resolveStepToAction(step, snapshot, screenshot, groundingMap = nu
     // Steps that need selector resolution (CLICK, TYPE)
     const goalText = step.goalText || step.description || step.selector || '';
 
-    // If the plan already includes a concrete CSS selector (and NOT a [N] grounding notation), use it directly
+    // If the plan already includes a concrete CSS selector (and NOT a [N] grounding notation),
+    // verify it exists in the snapshot before fast-pathing — avoids "selector not found" loops
+    // when the LLM plans with site-specific IDs that may be dynamic (like Amazon's sort dropdown).
     if (step.selector && !isGroundingNotation &&
         (step.selector.startsWith('#') || step.selector.startsWith('.') || step.selector.startsWith('['))) {
-        const action = {
-            type: step.type,
-            selector: step.selector,
-            text: step.text || undefined,
-            reasoning: step.description || `${step.type} on ${step.selector}`,
-        };
-        // Also set fallback text for executeAction's multi-strategy click
-        if (goalText) action.text = action.text || goalText;
-        return action;
+
+        // Quick membership check: does this selector appear anywhere in the snapshot?
+        const allSnapshotSelectors = [
+            ...(snapshot.interactiveElements || []),
+            ...(snapshot.buttons || []),
+            ...(snapshot.links || []),
+            ...(snapshot.inputs || []),
+        ].map(el => el.selector || '');
+
+        const selectorExists = allSnapshotSelectors.some(s => s && s.includes(step.selector.replace(/^[#.]/, '')));
+
+        if (selectorExists || step.selector.startsWith('.')) {
+            // Class selectors are less dynamic, trust them. ID selectors must be confirmed.
+            const action = {
+                type: step.type,
+                selector: step.selector,
+                text: step.text || undefined,
+                reasoning: step.description || `${step.type} on ${step.selector}`,
+            };
+            if (goalText) action.text = action.text || goalText;
+            return action;
+        }
+
+        // Selector not found in snapshot — fall through to heuristic/goalText resolution
+        console.warn(`[AutonomousLoop] Selector "${step.selector}" not found in DOM snapshot — falling back to goalText resolution`);
     }
 
     // Use LocalSelectorService to resolve
@@ -216,8 +250,10 @@ async function resolveStepToAction(step, snapshot, screenshot, groundingMap = nu
         action.text = step.text || '';
         if (step.pressEnter) action.pressEnter = true;
     }
-    if (step.type === 'CLICK' && resolved.fallbackText) {
-        action.text = resolved.fallbackText;
+    if (step.type === 'CLICK') {
+        // Always give the executor a text fallback for the JS force-click strategy.
+        // Priority: resolved.fallbackText → step.goalText → step.description
+        action.text = resolved.fallbackText || step.goalText || step.description || null;
     }
 
     return action;
