@@ -11,7 +11,7 @@ import { useUIStore } from '../../store/uiStore';
 export default function HomePage() {
     const [inputValue, setInputValue] = useState('');
     const { startWorkflow } = useWorkflowStore();
-    const { setActiveView } = useUIStore();
+    const { setActiveView, openAgentPanel } = useUIStore();
     const { createNewTab } = useTabStore();
 
     const handleSearch = (e) => {
@@ -24,8 +24,9 @@ export default function HomePage() {
             createNewTab(query.startsWith('http') ? query : `https://${query}`);
             setActiveView('browser');
         } else {
+            openAgentPanel();
             startWorkflow(query);
-            // uiStore action to open panel
+            setInputValue('');
         }
     };
 

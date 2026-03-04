@@ -157,7 +157,7 @@ export default function AgentPanel() {
             </AnimatePresence>
 
             {/* Content Area */}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-hide flex flex-col py-4 px-4 gap-3">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-hide flex flex-col py-4 px-4 gap-3 select-text">
                 {/* Empty State */}
                 {messages.length === 0 && !isRunning && (
                     <div className="flex-1 flex flex-col items-center justify-center text-center gap-3 opacity-40 select-none">

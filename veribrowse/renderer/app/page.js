@@ -64,9 +64,22 @@ export default function MainLayout() {
 
                 {/* Shared Viewport Area */}
                 <div className="flex-1 relative flex overflow-hidden">
-                    {/* Main Content Area — BrowserLayer handles native view offset internally */}
+                    {/* Browser Viewport — native view, handles its own sizing */}
                     <div className="absolute inset-0 z-0">
-                        {/* The Page Layer */}
+                        <ErrorBoundary name="BrowserLayer">
+                            <BrowserLayer />
+                        </ErrorBoundary>
+                    </div>
+
+                    {/* Pages layer — shrinks when agent panel opens so content
+                            re-centres within the visible area instead of going under the panel */}
+                    <div
+                        className="absolute inset-y-0 left-0 z-10 overflow-hidden"
+                        style={{
+                            right: agentPanelOpen ? 420 : 0,
+                            transition: 'right 0.25s ease-in-out',
+                        }}
+                    >
                         <AnimatePresence mode="wait">
                             {(activeView === 'home' || !activeTabId) && (
                                 <motion.div
@@ -74,17 +87,12 @@ export default function MainLayout() {
                                     initial={{ opacity: 0 }}
                                     animate={{ opacity: 1 }}
                                     exit={{ opacity: 0 }}
-                                    className="absolute inset-0 z-10"
+                                    className="absolute inset-0"
                                 >
                                     <HomePage />
                                 </motion.div>
                             )}
                         </AnimatePresence>
-
-                        {/* The Browser Viewport */}
-                        <ErrorBoundary name="BrowserLayer">
-                            <BrowserLayer />
-                        </ErrorBoundary>
 
                         {/* Overlays */}
                         <AnimatePresence>
@@ -95,7 +103,7 @@ export default function MainLayout() {
                         </AnimatePresence>
                     </div>
 
-                    {/* 3. Agent Panel — AnimatePresence fully unmounts when closed so
+                    {/* Agent Panel — AnimatePresence fully unmounts when closed so
                             the native BrowserView never has a partial-panel overlap */}
                     <AnimatePresence>
                         {agentPanelOpen && (
