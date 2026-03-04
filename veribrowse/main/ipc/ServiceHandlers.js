@@ -15,6 +15,9 @@ const store = new Store();
 export function registerServiceHandlers() {
     ipcMain.handle('settings:get', (event, key) => store.get(key));
     ipcMain.on('settings:set', (event, { key, value }) => store.set(key, value));
+
+    ipcMain.handle('profile:get', () => store.get('userProfile') || {});
+    ipcMain.on('profile:set', (event, profile) => store.set('userProfile', profile));
     ipcMain.handle('credits:get-stats', () => CreditGuard.getStats());
     // Note: 'agent:get-stats' is registered in AgentHandlers.js (includes IPCGuard status)
 

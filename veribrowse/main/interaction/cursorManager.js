@@ -138,6 +138,19 @@ const CLICK_FEEDBACK_SCRIPT = `
 })();
 `;
 
+/**
+ * Script to set the cursor transition duration before a movement begins.
+ * Called once per moveCursorTo() instead of updating position per-step.
+ */
+function buildTransitionScript(durationMs) {
+    return `
+(function () {
+    var el = document.getElementById('__vb_cursor__');
+    if (el) el.style.transition = 'transform ' + ${durationMs} + 'ms linear';
+})();
+`;
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────
 
 /**
@@ -173,6 +186,23 @@ export async function initCursor(page) {
 export async function updateCursorPosition(page, x, y) {
     try {
         await page.evaluate(buildMoveScript(x, y));
+    } catch {
+        // Silent — cursor overlay is purely cosmetic
+    }
+}
+
+/**
+ * Set the CSS transition duration on the cursor overlay.
+ * Call ONCE before starting a movement so the overlay animates smoothly
+ * from current position to final position with a single updateCursorPosition
+ * call, rather than requiring per-step updates.
+ *
+ * @param {import('playwright').Page} page
+ * @param {number} durationMs - transition duration in milliseconds
+ */
+export async function setCursorTransitionDuration(page, durationMs) {
+    try {
+        await page.evaluate(buildTransitionScript(durationMs));
     } catch {
         // Silent — cursor overlay is purely cosmetic
     }

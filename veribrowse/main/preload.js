@@ -25,6 +25,7 @@ const allowedChannels = [
   'browser:shadow-tab-created',
   'browser:shadow-tab-updated',
   'browser:shadow-tab-closed',
+  'browser:screenshot-updated',
   'agent:status',
   'agent:error',
   'agent:summary-ready',
@@ -76,6 +77,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settings: {
     get: (key) => ipcRenderer.invoke('settings:get', key),
     set: (key, value) => ipcRenderer.send('settings:set', { key, value }),
+  },
+
+  // ─── User Profile (saved credentials for login/signup automation) ──────────
+  profile: {
+    get: () => ipcRenderer.invoke('profile:get'),
+    set: (profile) => ipcRenderer.send('profile:set', profile),
   },
 
   // ─── Credits ──────────────────────────────────────────────────────────────

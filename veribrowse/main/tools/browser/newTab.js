@@ -1,10 +1,14 @@
 /**
  * newTab.js
- * 
+ *
  * Creates a new Playwright page and (optionally) an Electron BrowserView.
  * ZERO LLM calls.
- * 
+ *
  * Distinguishes between User Tabs (visible) and Shadow Tabs (agent head-only).
+ *
+ * FIX: All tabs now go through BrowserManager.createUserTab() /
+ * createShadowTab() which auto-attach StateSync. Previously, direct use of
+ * global.userTabsMap bypassed this, leaving new tabs with no URL/title sync.
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -16,63 +20,59 @@ export default async function newTab(context, { url = 'about:blank', type = 'use
         const tabId = `${type}-${uuidv4().slice(0, 8)}`;
         console.log(`[Tool:NewTab] Creating ${type} tab: ${tabId} (${url})`);
 
-        // 1. Create Playwright Page
-        const page = await context.newPage();
-
-        if (url !== 'about:blank') {
-            await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(e => console.warn(e.message));
-        }
-
-        const tabObject = {
-            id: tabId,
-            url: page.url(),
-            title: await page.title(),
-            favicon: null,
-            isLoading: false,
-            type,
-            purpose
-        };
-
         if (type === 'user') {
-            // 2. Register tab in BrowserManager so ensureBrowserView can find it
-            global.userTabsMap.set(tabId, {
-                playwrightPage: page,
-                url: tabObject.url,
-                title: tabObject.title,
-                type: 'user'
-            });
+            // createUserTab() creates the Playwright page AND wires StateSync — fixes the
+            // "new tabs never sync URL/title" bug caused by raw global.userTabsMap.set().
+            const page = await browserManager.createUserTab(tabId, url);
 
-            // 3. Create WebContentsView via BrowserManager (hidden at 0,0 until renderer resizes)
+            const tabObject = {
+                id: tabId,
+                url: page.url(),
+                title: await page.title().catch(() => 'New Tab'),
+                favicon: null,
+                isLoading: false,
+                type,
+                purpose,
+            };
+
+            // Create and load the visible WebContentsView
             const view = browserManager.ensureBrowserView(tabId);
-
-            // 4. Load URL in the WebContentsView so the visible tab isn't blank
-            if (view && url !== 'about:blank') {
-                view.webContents.loadURL(url).catch(e =>
+            if (view && tabObject.url !== 'about:blank') {
+                view.webContents.loadURL(tabObject.url).catch(e =>
                     console.warn('[Tool:NewTab] WebContentsView loadURL failed:', e.message)
                 );
             }
 
             // Notify renderer
             bus.emit('browser:user-tab-created', tabObject);
-        } else {
-            // Shadow Tab: Playwright only
-            global.shadowTabsMap.set(tabId, { playwrightPage: page });
 
-            // Notify renderer
-            bus.emit('browser:shadow-tab-created', tabObject);
+        } else {
+            // Shadow Tab: Playwright only — createShadowTab() also wires StateSync
+            // so agent progress (URL changes) show up as status updates.
+            await browserManager.createShadowTab(tabId);
+
+            bus.emit('browser:shadow-tab-created', {
+                id: tabId,
+                url: 'about:blank',
+                title: 'Shadow Tab',
+                favicon: null,
+                isLoading: false,
+                type,
+                purpose,
+            });
         }
 
         return {
             success: true,
-            result: { tabId, url: tabObject.url },
-            error: null
+            result: { tabId, url },
+            error: null,
         };
     } catch (err) {
         console.error(`[Tool:NewTab] Failed: ${err.message}`);
         return {
             success: false,
             result: null,
-            error: err.message
+            error: err.message,
         };
     }
 }

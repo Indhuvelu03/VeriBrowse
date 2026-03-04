@@ -34,7 +34,7 @@ export async function markPage(page) {
         document.body.appendChild(container);
 
         var style = document.createElement('style');
-        style.innerHTML = '.' + classPrefix + '{position:absolute;background-color:#ff3e00;color:white;font-family:monospace;font-size:11px;font-weight:bold;padding:1px 4px;border-radius:3px;box-shadow:0 2px 4px rgba(0,0,0,0.3);border:1px solid white;pointer-events:none;white-space:nowrap;z-index:2147483647;opacity:0.95;}';
+        style.textContent = '.' + classPrefix + '{position:absolute;background-color:#ff3e00;color:white;font-family:monospace;font-size:11px;font-weight:bold;padding:1px 4px;border-radius:3px;box-shadow:0 2px 4px rgba(0,0,0,0.3);border:1px solid white;pointer-events:none;white-space:nowrap;z-index:2147483647;opacity:0.95;}';
         container.appendChild(style);
 
         var elements = document.querySelectorAll('a,button,input,select,textarea,[role="button"],[role="link"],[role="checkbox"],[onclick]');

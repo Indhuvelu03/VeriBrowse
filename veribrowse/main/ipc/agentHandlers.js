@@ -45,8 +45,14 @@ export function registerAgentHandlers() {
 
         // Release is handled by WorkflowEngine/AgentRuntime via EventBus listeners
         // (agent:autonomous-done, agent:error, agent:chat-response).
-        // We register a one-time release listener to be safe.
-        const releaseOnce = () => IPCGuard.release('agent:run');
+        // _released guard prevents double-release if two completion events fire
+        // in the same tick (e.g. agent:error followed by agent:autonomous-done).
+        let _agentRunReleased = false;
+        const releaseOnce = () => {
+            if (_agentRunReleased) return;
+            _agentRunReleased = true;
+            IPCGuard.release('agent:run');
+        };
         bus.once('agent:autonomous-done', releaseOnce);
         bus.once('agent:chat-response', releaseOnce);
         bus.once('agent:error', releaseOnce);

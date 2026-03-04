@@ -41,14 +41,18 @@ export default async function click(page, { selector, text }) {
             const found = await page.evaluate((t) => {
                 // Use regex-based helpers — Babel polyfills .trim()/.toLowerCase() which breaks eval
                 var target = t.replace(/^\s+|\s+$/g, '').toLowerCase();
-                var els = document.querySelectorAll('button, a, div, span, li');
+                var els = document.querySelectorAll('button, a, div, span, li, input, label');
+                var bestEl = null;
                 for (var i = 0; i < els.length; i++) {
                     var el = els[i];
-                    var content = (el.innerText || '').replace(/^\s+|\s+$/g, '').toLowerCase();
+                    var content = (el.innerText || el.value || '').replace(/^\s+|\s+$/g, '').toLowerCase();
                     if (content.indexOf(target) !== -1) {
-                        el.click();
-                        return true;
+                        if (!bestEl || bestEl.contains(el)) { bestEl = el; }
                     }
+                }
+                if (bestEl) {
+                    bestEl.click();
+                    return true;
                 }
                 return false;
             }, text);

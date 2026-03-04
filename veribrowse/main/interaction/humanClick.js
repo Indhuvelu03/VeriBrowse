@@ -21,9 +21,9 @@
 
 import {
     randInt, naturalJitter, hoverPause, hesitation,
-    actionCooldown, mouseStepDelay, easeInOut, randomDelay
+    actionCooldown, easeInOut, randomDelay
 } from './humanTiming.js';
-import { initCursor, updateCursorPosition, showClickFeedback } from './cursorManager.js';
+import { initCursor, updateCursorPosition, showClickFeedback, setCursorTransitionDuration } from './cursorManager.js';
 
 // ─── Internal state: track cursor's last known position ────────────────────
 // Allows movement to START from the correct position instead of (0,0) every time.
@@ -47,16 +47,39 @@ let _cursorY = 0;
  * @param {{ steps?: number, fast?: boolean }} [options]
  */
 export async function moveCursorTo(page, targetX, targetY, options = {}) {
-    const steps = options.fast ? randInt(6, 12) : randInt(18, 32);
+    const baseSteps = options.fast ? randInt(6, 12) : randInt(18, 28);
 
     const startX = _cursorX;
     const startY = _cursorY;
 
-    // Bezier midpoint: offset perpendicular to the direct path to create a
-    // subtle arc. Humans rarely move in perfectly straight lines.
-    const midX = (startX + targetX) / 2 + randInt(-30, 30);
-    const midY = (startY + targetY) / 2 + randInt(-20, 20);
+    // Scale arc and step count proportionally to traversal distance.
+    const dist = Math.round(Math.hypot(targetX - startX, targetY - startY));
+    // Short moves (< 80px) use half the steps — still smooth but snappier
+    const steps = dist < 80 ? Math.max(6, Math.round(baseSteps * 0.5)) : baseSteps;
 
+    // Bezier midpoint: arc perpendicular to path, scaled to traversal distance.
+    // A fixed ±30px looks natural over 400px but wildly exaggerated over 50px
+    // (short clicks to nearby inputs/dropdowns). Proportional scaling keeps the
+    // path subtly curved regardless of distance.
+    const arcMax = Math.min(Math.round(dist * 0.18), 28); // cap at 28px
+    const midX = (startX + targetX) / 2 + randInt(-arcMax, arcMax);
+    const midY = (startY + targetY) / 2 + randInt(-Math.round(arcMax * 0.65), Math.round(arcMax * 0.65));
+
+    // Total traversal time budget (ms) — matches the old per-step timing of
+    // mouseStepDelay (avg ~12ms × steps). Preserved as a POST-burst sleep so
+    // the overall action timeline looks identical to a human from the outside.
+    const traversalMs = steps * randInt(8, 16);
+
+    // Set the cursor overlay CSS transition to cover the full traversal time.
+    // The overlay will glide from its current position to targetX/targetY
+    // smoothly using ONE CSS animation — no per-step page.evaluate() calls.
+    await setCursorTransitionDuration(page, traversalMs);
+
+    // Fire all intermediate Playwright mouse events in a tight burst.
+    // Without per-step delays they complete in ~30-60ms total (one render frame),
+    // so CSS :hover state changes on page elements are imperceptible to the user.
+    // The full Bezier trajectory IS sent to the page — anti-bot event fidelity
+    // is fully preserved; only the visible timing is collapsed.
     for (let i = 1; i <= steps; i++) {
         const t = i / steps;
         const ease = easeInOut(t);
@@ -66,24 +89,31 @@ export async function moveCursorTo(page, targetX, targetY, options = {}) {
         const x = bt * bt * startX + 2 * bt * ease * midX + ease * ease * targetX;
         const y = bt * bt * startY + 2 * bt * ease * midY + ease * ease * targetY;
 
-        // Add per-step micro-jitter — decreases near destination for precise landing
-        const jitterScale = 1 - Math.pow(t, 2); // jitter fades as we near target
+        // Per-step micro-jitter — decreases near destination for precise landing
+        const jitterScale = 1 - Math.pow(t, 2);
         const jitter = naturalJitter(2 * jitterScale);
 
         const px = Math.round(x + jitter.dx);
         const py = Math.round(y + jitter.dy);
 
-        // Move the real Playwright mouse (fires mousemove events into the page)
+        // Move the real Playwright mouse (fires mousemove events into the page).
+        // No delay between steps — hover state changes are sub-frame and invisible.
         await page.mouse.move(px, py);
-        // Sync the visual overlay
-        await updateCursorPosition(page, px, py);
-        // Short delay between steps (pacing)
-        await mouseStepDelay();
     }
 
-    // Final precise landing at exact target
+    // Final precise landing
     await page.mouse.move(targetX, targetY);
+
+    // Single cursor overlay update — CSS transition animates the overlay
+    // from startX/startY to targetX/targetY over traversalMs milliseconds.
     await updateCursorPosition(page, targetX, targetY);
+
+    // Hold for the natural traversal duration (anti-bot timing realism).
+    // The CSS transition finishes at exactly the same time.
+    await randomDelay(traversalMs, traversalMs + 20);
+
+    // Reset CSS transition to near-instant for snap updates (e.g. after clicks).
+    await setCursorTransitionDuration(page, 8);
 
     _cursorX = targetX;
     _cursorY = targetY;
@@ -177,12 +207,38 @@ export async function humanClickElement(page, selector, fallbackText, options = 
     if (selector) {
         try {
             await page.waitForSelector(selector, { state: 'visible', timeout: 5000 });
+            // Scroll the element into the viewport before resolving coordinates.
+            // Without this, elements below the fold have coordinates outside the visible
+            // area and the cursor "clicks" empty space.
+            await page.locator(selector).first().scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
             const { x, y, found } = await resolveElementCenter(page, selector);
 
             if (found) {
+                // Capture pre-click URL so we can detect navigation AFTER the click.
+                // Pre-registering waitForNavigation before humanClickAt is unreliable —
+                // GitHub (and other SPAs) fire background framenavigated/pushState events
+                // that resolve the listener before the actual click fires, causing the
+                // post-click getDOMSnapshot to capture a stale page.
+                const preClickUrl = page.url();
                 await humanClickAt(page, x, y, options);
-                // Wait for potential navigation after click
-                await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => { });
+                // If navigation already completed during humanClickAt's actionCooldown
+                // (URL changed), we're done — no extra wait needed on the fast path.
+                // If URL is unchanged, give it up to 2s for a navigation that's still
+                // in-flight, or 300ms minimum settle time for non-navigating clicks.
+                if (page.url() === preClickUrl) {
+                    // URL unchanged — navigation may be in-flight or not happening.
+                    // Give it up to 2s for a pending nav, or 300ms DOM settle.
+                    await Promise.race([
+                        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 2000 }).catch(() => null),
+                        page.waitForTimeout(300),
+                    ]);
+                } else {
+                    // URL already changed during humanClickAt's actionCooldown.
+                    // Ensure the new page has finished parsing before we return —
+                    // if domcontentloaded already fired this resolves instantly,
+                    // otherwise waits for the parsing to complete.
+                    await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => {});
+                }
                 return { success: true, method: 'selector+human-cursor' };
             }
         } catch (e) {
@@ -209,8 +265,16 @@ export async function humanClickElement(page, selector, fallbackText, options = 
                 const jitter = naturalJitter(4);
                 const x = Math.round(box.x + box.width / 2 + jitter.dx);
                 const y = Math.round(box.y + box.height / 2 + jitter.dy);
+                const preClickUrl2 = page.url();
                 await humanClickAt(page, x, y, options);
-                await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => { });
+                if (page.url() === preClickUrl2) {
+                    await Promise.race([
+                        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 2000 }).catch(() => null),
+                        page.waitForTimeout(300),
+                    ]);
+                } else {
+                    await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => {});
+                }
                 return { success: true, method: 'text+human-cursor' };
             }
         } catch (e) {
@@ -222,17 +286,34 @@ export async function humanClickElement(page, selector, fallbackText, options = 
         // Also uses the same cleaned single-line search term.
         const jsCode = `(function() {
             var target = ${JSON.stringify(cleanFallback.toLowerCase())};
-            var els = document.querySelectorAll('button,a,div,span,li,[role="button"],[role="option"]');
+            var els = document.querySelectorAll('button,a,div,span,li,[role="button"],[role="option"],[role="checkbox"],[role="menuitem"],input[type="checkbox"],input[type="radio"],label');
+            var bestEl = null;
             for (var i = 0; i < els.length; i++) {
                 var el = els[i];
-                var content = (el.innerText || '').replace(/^\\s+|\\s+$/g,'').toLowerCase();
-                if (content.indexOf(target) !== -1) { el.click(); return true; }
+                var content = (el.innerText || el.value || '').replace(/^\\s+|\\s+$/g,'').toLowerCase();
+                if (content.indexOf(target) !== -1) {
+                    if (!bestEl || bestEl.contains(el)) { bestEl = el; }
+                }
             }
+            if (bestEl) { bestEl.click(); return true; }
             return false;
         })()`;
         const found = await page.evaluate(jsCode);
 
         if (found) {
+            // Sync cursor position so the next Bezier move starts from the correct
+            // location. JS force-click bypasses humanClickAt, so _cursorX/_cursorY
+            // would otherwise point to wherever the last animated click landed.
+            try {
+                const loc = page.getByText(cleanFallback, { exact: false }).first();
+                const box2 = await loc.boundingBox({ timeout: 1000 });
+                if (box2) {
+                    _cursorX = Math.round(box2.x + box2.width / 2);
+                    _cursorY = Math.round(box2.y + box2.height / 2);
+                    await updateCursorPosition(page, _cursorX, _cursorY).catch(() => {});
+                }
+            } catch { /* non-fatal — cursor stays at last animated position */ }
+
             await actionCooldown();
             return { success: true, method: 'js-force' };
         }

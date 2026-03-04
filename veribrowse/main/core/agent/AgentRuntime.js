@@ -23,7 +23,7 @@ import bus from '../EventBus.js';
 import UIFeedback from '../UIFeedback.js';
 import compactor from '../ContextCompactor.js';
 import * as CreditGuard from '../CreditGuard.js';
-import { DEEP_SUMMARY_PROMPT } from '../../constants.js';
+import { DEEP_SUMMARY_PROMPT, COMPLETION_SUMMARY_PROMPT } from '../../constants.js';
 
 // ─── Runtime State ──────────────────────────────────────────────────────
 let currentAbort = null;    // AbortController for the active task
@@ -142,7 +142,7 @@ export async function start(page, goal, options = {}) {
         if (!deepSummary && result.success) {
             const successSteps = result.steps || [];
             const doneStep = successSteps.slice().reverse().find(s => s.type === 'DONE');
-            const doneResult = doneStep?.result;
+            const doneResult = doneStep?.result || '';
 
             // Also collect EXTRACT step output — actual page data captured during execution
             const extractResult = successSteps
@@ -154,19 +154,77 @@ export async function start(page, goal, options = {}) {
             const stepCount = successSteps.filter(s => s._success || s.success).length || 0;
             const GENERIC = /^(Task complete|Finished|Done|Task completed|Finished\.)\.?$/i;
 
-            let chatReply;
-            if (doneResult && typeof doneResult === 'string' && doneResult.length > 20 && !GENERIC.test(doneResult)) {
-                // Planner provided a meaningful DONE result (e.g. product name + price)
-                chatReply = doneResult;
-            } else if (extractResult) {
-                // Fall back to EXTRACT output — trim to ~800 chars for readability
-                chatReply = extractResult.length > 800
-                    ? extractResult.slice(0, 800) + '…'
-                    : extractResult;
+            // Detect lazy cop-out patterns: "please check / filter / select / manually"
+            // Also catches "Check [site] for..." without "please" prefix
+            const LAZY_COP_OUT = /please\s+(check|filter|select|look|browse|search|see|view|verify|review|visit|pick|find|manually|do|complete)|manually\s+(filter|check|select|browse|search|verify)|check\s+(the\s+)?(page|site|website|results|browser|extracted|google|amazon|flipkart|makemytrip|redbus)\b/i;
+            const isLazyResult = doneResult && LAZY_COP_OUT.test(doneResult);
+
+            // ── Detect booking/form tasks that deserve a rich LLM summary ──
+            const isBookingTask =
+                /book|flight|train|hotel|ticket|reservation|payment|passenger|irctc|bus/i.test(goal) ||
+                /payment page|booking ready|passenger detail|book now/i.test(doneResult);
+
+            // ── Detect search/comparison/research tasks that need LLM summarization ──
+            const isSearchTask =
+                /search|find|compare|best|cheapest|top|recommend|suggest|price|under|below|between|range|headphone|laptop|phone|product|review/i.test(goal);
+
+            if ((isBookingTask || isSearchTask) && CreditGuard.getStats().callsRemaining > 5) {
+                // Build a compact step narrative for the LLM to summarise
+                const stepNarrative = successSteps
+                    .filter(s => (s._success || s.success) && s.type !== 'DONE')
+                    .map(s => {
+                        const parts = [`[${s.type}]`];
+                        if (s.url)  parts.push(`url=${s.url}`);
+                        if (s.text) parts.push(`text="${s.text}"`);
+                        if (s.value) parts.push(`value="${s.value}"`);
+                        if (s.description || s.reasoning) parts.push(s.description || s.reasoning);
+                        if (s.result && typeof s.result === 'string' && s.result.length < 300) parts.push(`result="${s.result}"`);
+                        return parts.join(' ');
+                    })
+                    .join('\n');
+
+                const summaryCtx = [
+                    `## GOAL\n${goal}`,
+                    stepNarrative ? `## STEPS EXECUTED\n${stepNarrative}` : null,
+                    doneResult   ? `## DONE RESULT\n${doneResult}` : null,
+                    extractResult ? `## PAGE EXTRACT (partial)\n${extractResult.slice(0, 1500)}` : null,
+                ].filter(Boolean).join('\n\n');
+
+                try {
+                    const statusMsg = isSearchTask ? 'Summarizing search results…' : 'Generating booking summary…';
+                    emitStatus(statusMsg, 'thinking');
+                    // Use DEEP_SUMMARY_PROMPT for search/comparison tasks, COMPLETION_SUMMARY_PROMPT for bookings
+                    const prompt = isSearchTask && !isBookingTask
+                        ? DEEP_SUMMARY_PROMPT
+                        : COMPLETION_SUMMARY_PROMPT;
+                    const summary = await CreditGuard.generate(
+                        `${prompt}\n\n${summaryCtx}`
+                    );
+                    bus.emit('agent:chat-response', { goal, response: summary.trim() });
+                } catch (sumErr) {
+                    console.warn('[AgentRuntime] Completion summary failed, using DONE result:', sumErr.message);
+                    // Graceful fallback: use the planner's DONE result directly (skip if lazy)
+                    const fallback = doneResult && doneResult.length > 20 && !GENERIC.test(doneResult) && !isLazyResult
+                        ? doneResult
+                        : extractResult
+                            ? extractResult.slice(0, 800) + (extractResult.length > 800 ? '…' : '')
+                            : `✅ Done in ${stepCount} step${stepCount !== 1 ? 's' : ''}. Check the browser for the result.`;
+                    bus.emit('agent:chat-response', { goal, response: fallback });
+                }
             } else {
-                chatReply = `✅ Done in ${stepCount} step${stepCount !== 1 ? 's' : ''}. Check the browser for the result.`;
+                // Non-booking, non-search task (or insufficient credits) — use existing logic
+                let chatReply;
+                if (doneResult && typeof doneResult === 'string' && doneResult.length > 20 && !GENERIC.test(doneResult) && !isLazyResult) {
+                    chatReply = doneResult;
+                } else if (extractResult) {
+                    chatReply = extractResult.length > 800
+                        ? extractResult.slice(0, 800) + '…'
+                        : extractResult;
+                } else {
+                    chatReply = `✅ Done in ${stepCount} step${stepCount !== 1 ? 's' : ''}. Check the browser for the result.`;
+                }
+                bus.emit('agent:chat-response', { goal, response: chatReply });
             }
-            bus.emit('agent:chat-response', { goal, response: chatReply });
         }
 
         // Notify renderer

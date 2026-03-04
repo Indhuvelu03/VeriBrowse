@@ -15,8 +15,75 @@
 import { generateJSON, vision } from '../CreditGuard.js';
 import { PLANNER_PROMPT, REPAIR_PROMPT, SYSTEM_PROMPT, ACTION_SCHEMA } from '../../constants.js';
 import compactor from '../ContextCompactor.js';
+import Store from 'electron-store';
+
+const _store = new Store();
 
 // ─── Helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Safely parse a JSON string returned by vision().
+ * Throws on malformed JSON so the caller's try/catch can fall back to generateJSON().
+ * Without this guard, a single malformed vision response crashes the whole agent loop.
+ */
+function safeParseJSON(raw) {
+    if (typeof raw !== 'string') return raw; // already an object
+    // Strip markdown fences that vision models sometimes wrap around JSON
+    const cleaned = raw
+        .replace(/^[`~]{3,}(?:json)?\s*/i, '')
+        .replace(/\s*[`~]{3,}\s*$/i, '')
+        .trim();
+    try {
+        return JSON.parse(cleaned);
+    } catch (e) {
+        // Attempt truncated JSON array recovery (vision responses can be cut off too)
+        const recovered = tryRecoverTruncatedArray(cleaned);
+        if (recovered) {
+            console.warn('[AgentReasoner:safeParseJSON] Recovered truncated JSON array (' + recovered.length + ' items)');
+            return recovered;
+        }
+        throw new Error(`Vision response is not valid JSON: ${e.message}`);
+    }
+}
+
+/**
+ * Try to recover a truncated JSON array by finding the last complete object.
+ */
+function tryRecoverTruncatedArray(text) {
+    if (!text || !text.startsWith('[')) return null;
+    let lastCompleteEnd = -1;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (escape) { escape = false; continue; }
+        if (ch === '\\' && inString) { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+
+        if (ch === '{' || ch === '[') depth++;
+        if (ch === '}' || ch === ']') {
+            depth--;
+            if (depth === 1 && ch === '}') {
+                lastCompleteEnd = i;
+            }
+        }
+    }
+
+    if (lastCompleteEnd <= 0) return null;
+
+    let recovered = text.slice(0, lastCompleteEnd + 1).trimEnd();
+    if (recovered.endsWith(',')) recovered = recovered.slice(0, -1);
+    recovered += '\n]';
+
+    try {
+        const parsed = JSON.parse(recovered);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch { /* recovery failed */ }
+    return null;
+}
 
 /**
  * Trim the DOM snapshot so we never blow the context window.
@@ -77,19 +144,34 @@ export async function planSteps(goal, snapshot = null, screenshot = null) {
     const pageContext = snapshot ? buildPageContext(compact) : 'No page loaded yet (about:blank).';
     const historyContext = compactor.getCompactContext();
 
+    // Inject saved user profile so the LLM can fill login/signup forms automatically
+    const userProfile = _store.get('userProfile') || {};
+    const profileFields = Object.entries(userProfile).filter(([, v]) => v && String(v).trim());
+    const profileContext = profileFields.length > 0
+        ? `## USER PROFILE (use these credentials when filling login or signup forms)\n${profileFields.map(([k, v]) => `${k}: ${v}`).join('\n')}`
+        : null;
+
+    // Inject current date so the LLM can resolve "tomorrow", "next Friday", etc.
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const tomorrowStr = new Date(now.getTime() + 86400000).toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const dateContext = `## CURRENT DATE\nToday is ${dateStr}. Tomorrow is ${tomorrowStr}.`;
+
     const userPrompt = [
         `## USER GOAL\n${goal}`,
+        dateContext,
+        profileContext,
         `## TASK HISTORY\n${historyContext}`,
         `## CURRENT PAGE STATE\n${pageContext}`,
         `## INSTRUCTIONS\n${PLANNER_PROMPT}`,
-    ].join('\n\n');
+    ].filter(Boolean).join('\n\n');
 
     let plan;
 
     if (screenshot) {
         try {
             const raw = await vision(userPrompt, screenshot);
-            plan = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            plan = typeof raw === 'string' ? safeParseJSON(raw) : raw;
         } catch (e) {
             console.warn('[AgentReasoner:planSteps] Vision failed, falling back to text:', e.message);
             plan = await generateJSON(userPrompt);
@@ -110,8 +192,15 @@ export async function planSteps(goal, snapshot = null, screenshot = null) {
     // Validate each step has at minimum { type, description }
     plan = plan.filter(step => step && step.type);
 
-    // Hard cap — never return more than 10 steps regardless of LLM output
-    plan = plan.slice(0, 10);
+    // De-duplicate consecutive identical steps (e.g., 50x "CLICK Next" from date picker hallucination)
+    plan = plan.filter((step, i) => {
+        if (i === 0) return true;
+        const prev = plan[i - 1];
+        return !(step.type === prev.type && step.goalText === prev.goalText && step.type !== 'DONE');
+    });
+
+    // Hard cap — never return more than 15 steps regardless of LLM output
+    plan = plan.slice(0, 15);
 
     // Ensure the plan ends with DONE if not already
     if (plan.length > 0 && plan[plan.length - 1].type !== 'DONE') {
@@ -147,7 +236,7 @@ export async function repairSelector(failedSelector, goalDescription, snapshot, 
     if (screenshot) {
         try {
             const raw = await vision(userPrompt, screenshot);
-            result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            result = typeof raw === 'string' ? safeParseJSON(raw) : raw;
         } catch (e) {
             console.warn('[AgentReasoner:repairSelector] Vision failed, falling back to text:', e.message);
             result = await generateJSON(userPrompt);
@@ -200,7 +289,7 @@ export async function replan(goal, completedSteps, remainingPlan, stuckReason, s
     if (screenshot) {
         try {
             const raw = await vision(userPrompt, screenshot);
-            plan = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            plan = typeof raw === 'string' ? safeParseJSON(raw) : raw;
         } catch (e) {
             console.warn('[AgentReasoner:replan] Vision failed, falling back to text:', e.message);
             plan = await generateJSON(userPrompt);
@@ -268,7 +357,7 @@ export async function decideSingleAction(task, snapshot, screenshot = null, hist
     if (screenshot) {
         try {
             const raw = await vision(fullPrompt, screenshot);
-            action = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            action = typeof raw === 'string' ? safeParseJSON(raw) : raw;
         } catch (e) {
             console.warn('[AgentReasoner:decideSingleAction] Vision failed, fallback:', e.message);
             action = await generateJSON(fullPrompt);

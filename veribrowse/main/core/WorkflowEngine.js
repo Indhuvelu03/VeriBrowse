@@ -238,9 +238,7 @@ class WorkflowEngine {
      * This is the Z-Axis shadow workspace — execution happens in background.
      */
     async _handleLongHorizon(goal, classification) {
-        UIFeedback.emit('PLANNING');
-
-        const page = browserManager.getActivePage();
+        const page = await this._getPageForTask();
         if (!page) {
             bus.emit('agent:error', { error: 'No browser tab available. Open a tab first.' });
             UIFeedback.emit('FAILED', 'No browser tab');
@@ -266,9 +264,7 @@ class WorkflowEngine {
      * Best for: "find the best X", "compare Y and Z", "research topic T".
      */
     async _handleDeep(goal, classification) {
-        UIFeedback.emit('PLANNING');
-
-        const page = browserManager.getActivePage();
+        const page = await this._getPageForTask();
         if (!page) {
             bus.emit('agent:error', { error: 'No browser tab available. Open a tab first.' });
             UIFeedback.emit('FAILED', 'No browser tab');
@@ -285,6 +281,39 @@ class WorkflowEngine {
             bus.emit('agent:error', { error: err.message });
             UIFeedback.emit('FAILED', err.message);
         }
+    }
+
+    /**
+     * Get the page for a new agent task.
+     * If the active tab already has content, open a fresh tab so the previous
+     * page is not overwritten. Each task runs in its own tab.
+     */
+    async _getPageForTask() {
+        const activePage = browserManager.getActivePage();
+        if (!activePage) return null;
+
+        const currentUrl = activePage.url();
+        if (!currentUrl || currentUrl === 'about:blank' || currentUrl === 'about:newtab') {
+            // Active tab is blank — reuse it
+            return activePage;
+        }
+
+        // Active tab already has content — create a fresh tab for this task
+        const tabId = `user-${Date.now().toString(36)}`;
+        console.log(`[WorkflowEngine] Active tab has content (${currentUrl}), opening new tab: ${tabId}`);
+
+        const newPage = await browserManager.createUserTab(tabId);
+        browserManager.ensureBrowserView(tabId);
+        bus.emit('browser:user-tab-created', {
+            id: tabId,
+            url: 'about:blank',
+            title: 'New Tab',
+            favicon: null,
+            isLoading: false,
+        });
+        // Tell the renderer to switch to the new tab
+        browserManager.sendToRenderer('browser:user-tab-switched', { tabId });
+        return newPage;
     }
 
     // ─── URL Extraction ─────────────────────────────────────────────────
