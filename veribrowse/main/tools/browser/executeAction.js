@@ -39,9 +39,8 @@ export default async function executeAction(action, page) {
             if (!result.success) {
                 throw new Error(result.error || `CLICK failed — selector: "${action.selector}", text: "${action.text}"`);
             }
-
-            // Wait for potential navigation after click
-            await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
+            // Navigation wait is handled inside humanClickElement (smart race).
+            // No second waitForLoadState here — that was an 8s penalty on every click.
             break;
         }
 
@@ -96,8 +95,33 @@ export default async function executeAction(action, page) {
         // ── PRESS_ENTER (convenience wrapper) ─────────────────────────
         case 'PRESS_ENTER': {
             await page.keyboard.press('Enter');
-            await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
-            await page.waitForTimeout(rand(500, 1000));
+            // ENHANCED: Better handling for SPA navigation
+            // SPAs (React, Angular, Vue) don't trigger waitForNavigation — they update content dynamically.
+            // Use a combination approach:
+            // 1. Try to wait for navigation (true page reload)
+            // 2. Meanwhile, wait for common indicators of page state changes (DOM mutations, network quiet)
+            // 3. Fall back to longer wait if neither happens
+            let navigationHappened = false;
+            try {
+                await Promise.race([
+                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 2000 })
+                        .then(() => { navigationHappened = true; }),
+                    page.waitForTimeout(100).then(() => {
+                        // After 100ms, check if network is idle (good indicator for SPA content load)
+                        return page.waitForLoadState('networkidle', { timeout: 2000 }).catch(() => {});
+                    })
+                ]);
+            } catch (e) {
+                // Navigation timeout — assume SPA content update, wait longer
+                navigationHappened = false;
+            }
+
+            // If no navigation detected, wait for SPA render
+            if (!navigationHappened) {
+                await page.waitForTimeout(rand(1200, 2500)); // SPA render time
+            } else {
+                await page.waitForTimeout(rand(300, 700)); // Page load settle
+            }
             break;
         }
 
@@ -116,12 +140,32 @@ export default async function executeAction(action, page) {
             try {
                 const extracted = await extract(page, { includeLinks: false });
                 // Mutate action so AutonomousLoop's executedSteps picks it up
-                if (extracted && extracted.text) {
-                    action.result = extracted.text.slice(0, 1500);
+                // extract() returns { success, result: { text, links, wordCount }, error }
+                if (extracted && extracted.result && extracted.result.text) {
+                    action.result = extracted.result.text.slice(0, 5000);
                 }
             } catch (e) {
                 console.warn('[executeAction:EXTRACT] Failed to extract page text:', e.message);
             }
+            break;
+        }
+
+        // ── SELECT ─────────────────────────────────────────────────────
+        // Handles native HTML <select> dropdowns (passenger count, class, etc.)
+        case 'SELECT': {
+            const selector = action.selector;
+            const value = action.value || action.text || '';
+            if (!selector) throw new Error('SELECT failed — no selector provided');
+
+            // Try by visible label first (what the user sees), then by value attribute
+            const succeeded = await page.selectOption(selector, { label: value }).catch(async () => {
+                await page.selectOption(selector, { value });
+            }).then(() => true).catch(() => false);
+
+            if (!succeeded) {
+                throw new Error(`SELECT failed — could not select "${value}" in "${selector}"`);
+            }
+            await page.waitForTimeout(rand(400, 800));
             break;
         }
 

@@ -76,6 +76,22 @@ async function prepare(page) {
         // (body must exist + network relatively quiet for cursor inject)
         await page.waitForSelector('body', { state: 'attached', timeout: 5000 }).catch(() => {});
 
+        // Neutralize cookie-consent overlays that intercept pointer events.
+        // Elements like <ghcc-consent> are position:fixed with a large hit area
+        // covering the entire viewport — they block ALL clicks on the page even
+        // though they are visually invisible/transparent.
+        await page.evaluate(() => {
+            try {
+                var els = document.querySelectorAll(
+                    'ghcc-consent, [data-cookie-consent-required], [id*="cookie-consent"], ' +
+                    '[id*="cookieconsent"], [class*="cookie-banner"], [class*="cookie-consent"]'
+                );
+                for (var i = 0; i < els.length; i++) {
+                    els[i].style.setProperty('pointer-events', 'none', 'important');
+                }
+            } catch (_) {}
+        }).catch(() => {});
+
         await initCursor(page);
         if (!_initializedPages.has(page)) {
             await resetCursorToCenter(page);
@@ -124,11 +140,18 @@ async function _handleClick(page, descriptor) {
 async function _handleType(page, descriptor) {
     await prepare(page);
 
-    // Wait for any input to be visible on the page — SPAs often render inputs late
+    // Wait for the target input field to be visible before typing.
+    // Previously waited for ANY input/textarea which could match the wrong field
+    // on pages with multiple inputs. Now waits for the specific target selector
+    // and falls back to the any-input heuristic only when no selector is given.
+    // Excludes non-typeable types (checkbox, radio, button, etc.) to avoid
+    // matching toggle inputs like PCMag's hamburger checkbox.
+    const TYPEABLE = 'textarea:visible, input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]):not([type="image"]):not([type="reset"]):visible';
+    const inputTarget = descriptor.selector || TYPEABLE;
     try {
-        await page.waitForSelector('input:visible, textarea:visible', { timeout: 8000 });
+        await page.waitForSelector(inputTarget, { state: 'visible', timeout: 8000 });
     } catch {
-        // Continue — maybe the provided selector will work anyway
+        // Continue — maybe the provided selector will work despite timeout
     }
 
     if (!descriptor.text) throw new Error('[InteractionEngine] type: no text provided');
@@ -198,22 +221,17 @@ async function _handleNavigate(page, descriptor) {
     if (!url.startsWith('http')) url = `https://${url}`;
 
     try {
-        // Use 'load' + extra settle for heavy SPAs like Amazon
-        await page.goto(url, { waitUntil: 'load', timeout: 45000 });
+        // 'load' fires reliably on all page types including service-worker sites
+        // (GitHub, Twitter, etc. use pushState — 'domcontentloaded' never fires
+        // for those virtual navigations, causing a guaranteed 30s timeout).
+        await page.goto(url, { waitUntil: 'load', timeout: 20000 });
     } catch (e) {
         // Even partial load is okay — continue
         console.warn('[InteractionEngine] Navigation did not fully settle:', e.message);
     }
 
-    // Wait for page to be truly interactive (body exists + network quiet)
-    try {
-        await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
-        await page.waitForSelector('body', { state: 'attached', timeout: 5000 });
-    } catch { /* proceed anyway */ }
-
-    // Allow JS frameworks to render
+    // Allow JS frameworks to render first pass (React/Vue hydration, etc.)
     await pageLoadSettle();
-    await pageLoadSettle(); // double for heavy SPAs
 
     // After navigation, reinit cursor on the new page content
     if (_initializedPages.has(page)) _initializedPages.delete(page);
