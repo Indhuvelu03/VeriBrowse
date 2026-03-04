@@ -28,10 +28,22 @@ export default function BrowserLayer() {
     const prevAgentPanelOpen = useRef(agentPanelOpen);
     useEffect(() => { agentPanelOpenRef.current = agentPanelOpen; }, [agentPanelOpen]);
 
+    // Track previous activeTabId so we can hide its native view on tab switch.
+    const prevActiveTabIdRef = useRef(activeTabId);
+
     const activeTab = userTabs.find(t => t.id === activeTabId);
     const hasUrl = activeTab && activeTab.url && activeTab.url !== 'about:blank';
 
     useEffect(() => {
+        // When switching tabs, hide the previous tab's native WebContentsView.
+        // Without this, the old tab's OS-level view stays visible on screen
+        // even after the active tab changes.
+        const prevTabId = prevActiveTabIdRef.current;
+        prevActiveTabIdRef.current = activeTabId;
+        if (prevTabId && prevTabId !== activeTabId && window.electronAPI?.browser) {
+            window.electronAPI.browser.hideViewport(prevTabId);
+        }
+
         if (!activeTabId || !window.electronAPI?.browser) return;
 
         if (!hasUrl || activeView !== 'browser' || overlayOpen) {

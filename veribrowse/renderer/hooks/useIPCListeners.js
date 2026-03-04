@@ -39,9 +39,13 @@ export default function useIPCListeners() {
 
         api.on('browser:user-tab-updated', (data) => {
             // If this tab isn't in the store yet, add it first (handles race with
-            // the 2s-delayed browser:user-tab-created from initializePlaywright)
+            // the 2s-delayed browser:user-tab-created from initializePlaywright).
+            // Only auto-add when the update carries a real URL — stale notifications
+            // (e.g. isLoading:false from a page 'close' event) must NOT resurrect
+            // a tab that was already removed by closeTab().
             const { userTabs } = useTabStore.getState();
             if (!userTabs.find(t => t.id === data.tabId)) {
+                if (!data.url) return;
                 addTab({ id: data.tabId, url: data.url, title: data.title, favicon: null, isLoading: false });
             } else {
                 updateTab(data.tabId, {
