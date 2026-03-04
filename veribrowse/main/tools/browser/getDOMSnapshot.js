@@ -28,14 +28,66 @@ export default async function getDOMSnapshot(page) {
     // Safe trim — never polyfilled by Babel because it's a plain regex replace
     function tr(s) { return s ? s.replace(/^\s+|\s+$/g, '') : ''; }
 
+    // ── Visibility helper ──────────────────────────────────────────────
+    // COMPLETE REWRITE: Handles modals, overlays, and hard-to-detect elements correctly
+    // Key insight: offsetParent === null doesn't mean hidden if in a position:fixed modal
+    function isVis(el) {
+      // Rule 1: Normal DOM flow elements
+      if (el.offsetParent !== null) return true;
+
+      // Rule 2: Element dimensions check
+      var r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return false; // zero-size = hidden
+
+      // Rule 3: Direct CSS display/visibility check
+      try {
+        var s = window.getComputedStyle(el);
+        if (s.display === 'none') return false;
+        if (s.visibility === 'hidden' && s.pointerEvents === 'none') return false;
+      } catch (e) {
+        // If we can't get computed style, assume visible (safer)
+      }
+
+      // Rule 4: Walk up checking for hidden ancestors
+      var parent = el.parentElement;
+      var depth = 0;
+      while (parent && depth < 25) {
+        try {
+          var ps = window.getComputedStyle(parent);
+          // If parent has display:none - we're hidden
+          if (ps.display === 'none') return false;
+          // If parent has position:fixed - we're likely in a modal (visible!)
+          if (ps.position === 'fixed' || ps.position === 'sticky') {
+            return r.width > 0 && r.height > 0; // Modal element - visible if has size
+          }
+        } catch (e) {
+          // Continue walking
+        }
+        parent = parent.parentElement;
+        depth++;
+      }
+
+      // Rule 5: If we got here - element has dimensions and no display:none in chain
+      // Mark as visible (might be off-screen but that's OK - we still need to interact with it)
+      return r.width > 0 && r.height > 0;
+    }
+
     // Safe selector builder — avoids chained prototype methods that Babel might polyfill
     function buildSelector(el) {
-      if (el.id) return '#' + el.id;
+      // Only use id if it contains no CSS-invalid characters (e.g. ad iframe ids have '/')
+      if (el.id && !/[/:.()[\]{}|\\]/.test(el.id)) return '#' + el.id;
       if (el.className && typeof el.className === 'string' && tr(el.className)) {
         var cls = el.className.replace(/^\s+|\s+$/g, '').replace(/\s+/g, '.');
         return '.' + cls;
       }
       return el.tagName.toLowerCase();
+    }
+
+    function safeId(id) {
+       if (!id) return '';
+       // If ID looks like a URL or has invalid CSS chars, don't expose it to avoid LLM hallucinating bad selectors
+       if (/[/:.()[\]{}|\\]/.test(id)) return '';
+       return id;
     }
 
     // Helper: get visible text
@@ -44,7 +96,7 @@ export default async function getDOMSnapshot(page) {
       var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       var node;
       while ((node = walker.nextNode())) {
-        if (node.parentElement && node.parentElement.offsetParent !== null) {
+        if (node.parentElement && isVis(node.parentElement)) {
           text += tr(node.textContent) + ' ';
         }
       }
@@ -63,11 +115,13 @@ export default async function getDOMSnapshot(page) {
         var rawText = el.innerText || el.value || el.placeholder || '';
         elements.push({
           index: i,
+          id: safeId(el.id),
           role: el.getAttribute('role') || el.tagName.toLowerCase(),
+          ariaLabel: el.getAttribute('aria-label') || '',
           text: tr(rawText).substring(0, 50),
           selector: buildSelector(el),
           position: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
-          visible: el.offsetParent !== null
+          visible: isVis(el)
         });
       }
       return elements;
@@ -76,7 +130,8 @@ export default async function getDOMSnapshot(page) {
     // Helper: get overlays
     function getOverlays() {
       var overlays = [];
-      var all = document.querySelectorAll('[role="dialog"], .modal, .popup');
+      // Include Angular CDK overlays and common modal frameworks
+      var all = document.querySelectorAll('[role="dialog"], .modal, .popup, .cdk-overlay-container, .cdk-overlay-pane, [class*="overlay"], .modal-dialog');
       for (var i = 0; i < all.length; i++) {
         var el = all[i];
         var rect = el.getBoundingClientRect();
@@ -84,7 +139,7 @@ export default async function getDOMSnapshot(page) {
           selector: buildSelector(el),
           text: tr(el.innerText || '').substring(0, 200),
           position: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
-          visible: el.offsetParent !== null
+          visible: isVis(el)
         });
       }
       return overlays;
@@ -102,9 +157,35 @@ export default async function getDOMSnapshot(page) {
       var el = inputEls[i];
       inputs.push({
         selector: buildSelector(el),
+        id: safeId(el.id),
+        name: el.name || '',
+        ariaLabel: el.getAttribute('aria-label') || '',
+        role: el.getAttribute('role') || '',
+        ariaExpanded: el.getAttribute('aria-expanded') || '',
         value: (el.value || '').substring(0, 100),
         placeholder: (el.placeholder || '').substring(0, 80),
-        visible: el.offsetParent !== null
+        visible: isVis(el),
+        type: el.type || ''
+      });
+    }
+
+    // Also capture contenteditable divs that act as inputs (Google Flights, etc.)
+    var editableDivs = document.querySelectorAll('[contenteditable="true"], [role="combobox"], [role="textbox"]');
+    for (var ii = 0; ii < editableDivs.length; ii++) {
+      var edEl = editableDivs[ii];
+      // Skip if already captured as input/textarea
+      if (edEl.tagName === 'INPUT' || edEl.tagName === 'TEXTAREA') continue;
+      inputs.push({
+        selector: buildSelector(edEl),
+        id: safeId(edEl.id),
+        name: edEl.getAttribute('name') || '',
+        ariaLabel: edEl.getAttribute('aria-label') || '',
+        role: edEl.getAttribute('role') || 'contenteditable',
+        ariaExpanded: edEl.getAttribute('aria-expanded') || '',
+        value: (edEl.textContent || '').substring(0, 100),
+        placeholder: edEl.getAttribute('placeholder') || '',
+        visible: isVis(edEl),
+        type: 'contenteditable'
       });
     }
 
@@ -115,7 +196,7 @@ export default async function getDOMSnapshot(page) {
       buttons.push({
         selector: buildSelector(elBtn),
         text: tr(elBtn.innerText || '').substring(0, 50),
-        visible: elBtn.offsetParent !== null
+        visible: isVis(elBtn)
       });
     }
 
@@ -127,7 +208,7 @@ export default async function getDOMSnapshot(page) {
         selector: buildSelector(elLink),
         href: elLink.href,
         text: tr(elLink.innerText || '').substring(0, 50),
-        visible: elLink.offsetParent !== null
+        visible: isVis(elLink)
       });
     }
 
@@ -150,6 +231,7 @@ export default async function getDOMSnapshot(page) {
 
   for (const el of rawSnapshot.interactiveElements || []) {
     el.text = sanitizeText(el.text);
+    el.ariaLabel = sanitizeText(el.ariaLabel);
   }
   for (const el of rawSnapshot.buttons || []) {
     el.text = sanitizeText(el.text);
@@ -163,6 +245,7 @@ export default async function getDOMSnapshot(page) {
   for (const el of rawSnapshot.inputs || []) {
     el.value = sanitizeText(el.value);
     el.placeholder = sanitizeText(el.placeholder);
+    el.ariaLabel = sanitizeText(el.ariaLabel);
   }
 
   return rawSnapshot;
