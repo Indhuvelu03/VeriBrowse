@@ -28,14 +28,56 @@ export default async function getDOMSnapshot(page) {
     // Safe trim — never polyfilled by Babel because it's a plain regex replace
     function tr(s) { return s ? s.replace(/^\s+|\s+$/g, '') : ''; }
 
+    // Escape string for CSS attribute selectors.
+    function escAttr(v) {
+      return tr(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    }
+
     // Safe selector builder — avoids chained prototype methods that Babel might polyfill
     function buildSelector(el) {
+      var tag = el.tagName.toLowerCase();
       if (el.id) return '#' + el.id;
+
+      // Prefer specific attributes for form controls so TYPE actions don't hit the wrong field.
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+        var name = tr(el.getAttribute('name') || '');
+        var type = tr(el.getAttribute('type') || '');
+        var autocomplete = tr(el.getAttribute('autocomplete') || '');
+        var placeholder = tr(el.getAttribute('placeholder') || '');
+        var ariaLabel = tr(el.getAttribute('aria-label') || '');
+
+        if (name && type && tag === 'input') return 'input[name="' + escAttr(name) + '"][type="' + escAttr(type) + '"]';
+        if (name) return tag + '[name="' + escAttr(name) + '"]';
+        if (type && tag === 'input' && type !== 'text') return 'input[type="' + escAttr(type) + '"]';
+        if (autocomplete) return tag + '[autocomplete="' + escAttr(autocomplete) + '"]';
+        if (ariaLabel) return tag + '[aria-label="' + escAttr(ariaLabel) + '"]';
+        if (placeholder) return tag + '[placeholder="' + escAttr(placeholder) + '"]';
+      }
+
       if (el.className && typeof el.className === 'string' && tr(el.className)) {
         var cls = el.className.replace(/^\s+|\s+$/g, '').replace(/\s+/g, '.');
-        return '.' + cls;
+        return tag + '.' + cls;
       }
-      return el.tagName.toLowerCase();
+
+      // Last resort: stable-ish nth-of-type scoped by parent if possible.
+      var idx = 1;
+      var prev = el.previousElementSibling;
+      while (prev) {
+        if (prev.tagName === el.tagName) idx++;
+        prev = prev.previousElementSibling;
+      }
+
+      var parent = el.parentElement;
+      if (parent) {
+        var pTag = parent.tagName.toLowerCase();
+        if (parent.id) return '#' + parent.id + ' > ' + tag + ':nth-of-type(' + idx + ')';
+        if (parent.className && typeof parent.className === 'string' && tr(parent.className)) {
+          var firstClass = parent.className.replace(/^\s+|\s+$/g, '').split(/\s+/)[0];
+          if (firstClass) return pTag + '.' + firstClass + ' > ' + tag + ':nth-of-type(' + idx + ')';
+        }
+      }
+
+      return tag + ':nth-of-type(' + idx + ')';
     }
 
     // Helper: get visible text
@@ -102,6 +144,11 @@ export default async function getDOMSnapshot(page) {
       var el = inputEls[i];
       inputs.push({
         selector: buildSelector(el),
+        tag: el.tagName.toLowerCase(),
+        type: (el.type || '').substring(0, 30),
+        name: (el.name || '').substring(0, 80),
+        autocomplete: (el.autocomplete || '').substring(0, 80),
+        ariaLabel: (el.getAttribute('aria-label') || '').substring(0, 80),
         value: (el.value || '').substring(0, 100),
         placeholder: (el.placeholder || '').substring(0, 80),
         visible: el.offsetParent !== null
@@ -161,6 +208,11 @@ export default async function getDOMSnapshot(page) {
     el.text = sanitizeText(el.text);
   }
   for (const el of rawSnapshot.inputs || []) {
+    el.tag = sanitizeText(el.tag);
+    el.type = sanitizeText(el.type);
+    el.name = sanitizeText(el.name);
+    el.autocomplete = sanitizeText(el.autocomplete);
+    el.ariaLabel = sanitizeText(el.ariaLabel);
     el.value = sanitizeText(el.value);
     el.placeholder = sanitizeText(el.placeholder);
   }

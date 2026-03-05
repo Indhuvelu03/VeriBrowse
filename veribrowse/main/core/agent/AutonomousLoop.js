@@ -110,11 +110,31 @@ function getDomain(url) {
  * A valid PNG base64-encodes a file starting with the 8-byte magic: \x89PNG\r\n\x1a\n
  * In base64 this always starts with 'iVBORw0KGgo'.
  */
-function isValidScreenshot(b64) {
+function normalizeScreenshotBase64(input) {
+    if (!input) return null;
+
+    // Playwright screenshot() returns Buffer by default.
+    if (Buffer.isBuffer(input)) {
+        return input.toString('base64');
+    }
+
+    if (typeof input === 'string') {
+        const markerIndex = input.indexOf(';base64,');
+        return markerIndex >= 0 ? input.slice(markerIndex + 8) : input;
+    }
+
+    // Defensive conversion for typed arrays.
+    if (input instanceof Uint8Array) {
+        return Buffer.from(input).toString('base64');
+    }
+
+    return null;
+}
+
+function isValidScreenshot(input) {
+    const b64 = normalizeScreenshotBase64(input);
     if (!b64 || b64.length < 1500) return false;
-    // Strip data-URI prefix if present
-    const raw = b64.includes(';base64,') ? b64.split(';base64,')[1] : b64;
-    return raw.startsWith('iVBORw0KGgo');
+    return b64.slice(0, 11) === 'iVBORw0KGgo';
 }
 
 /**
@@ -133,7 +153,8 @@ async function captureMarkedScreenshot(page) {
         await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => { });
 
         const groundingMap = await markPage(page);
-        const screenshot = await page.screenshot({ encoding: 'base64' });
+        const screenshotBuffer = await page.screenshot({ type: 'png' });
+        const screenshot = normalizeScreenshotBase64(screenshotBuffer);
         await unmarkPage(page);
 
         // Guard: validate PNG magic bytes — Gemini rejects blank/partial frames
@@ -146,7 +167,8 @@ async function captureMarkedScreenshot(page) {
     } catch (e) {
         console.warn('[AutonomousLoop] Visual grounding failed:', e.message);
         await unmarkPage(page).catch(() => { });
-        const screenshot = await page.screenshot({ encoding: 'base64' }).catch(() => null);
+        const screenshotBuffer = await page.screenshot({ type: 'png' }).catch(() => null);
+        const screenshot = normalizeScreenshotBase64(screenshotBuffer);
         // Same PNG validation on fallback path
         if (!isValidScreenshot(screenshot)) {
             return { screenshot: null, groundingMap: null };
@@ -248,6 +270,8 @@ async function resolveStepToAction(step, snapshot, screenshot, groundingMap = nu
 
     if (step.type === 'TYPE') {
         action.text = step.text || '';
+        action.fieldHint = step.goalText || step.description || step.selector || '';
+        action.goalText = step.goalText || step.description || step.selector || '';
         if (step.pressEnter) action.pressEnter = true;
     }
     if (step.type === 'CLICK') {
@@ -393,7 +417,8 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
                     }
                 }
 
-                const screenshotForStep = await page.screenshot({ encoding: 'base64' }).catch(() => null);
+                const screenshotForStepBuffer = await page.screenshot({ type: 'png' }).catch(() => null);
+                const screenshotForStep = normalizeScreenshotBase64(screenshotForStepBuffer);
 
                 // Resolve plan step → concrete action
                 let action;

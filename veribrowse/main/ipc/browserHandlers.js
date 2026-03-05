@@ -15,6 +15,7 @@ export function registerBrowserHandlers() {
         const entry = browserManager.userTabs.get(tabId);
         if (entry?.playwrightPage) {
             try {
+                browserManager.setActiveTab(tabId, { emit: true });
                 let targetUrl = url.trim();
                 if (!targetUrl.startsWith('http')) targetUrl = `https://${targetUrl}`;
 
@@ -51,9 +52,26 @@ export function registerBrowserHandlers() {
             }
             // createUserTab() registers the tab AND attaches StateSync automatically
             await browserManager.createUserTab(tabId, url);
+            const entry = browserManager.userTabs.get(tabId);
+            browserManager.sendToRenderer('browser:user-tab-created', {
+                id: tabId,
+                url: entry?.url || url,
+                title: entry?.title || 'New Tab',
+                favicon: null,
+                isLoading: false,
+            });
+            browserManager.setActiveTab(tabId, { emit: true });
             console.log(`[IPC:new-tab] Created user tab ${tabId} via BrowserManager`);
         } catch (e) {
             console.error('[IPC:new-tab] Failed:', e.message);
+        }
+    });
+
+    ipcMain.on('browser:activate-tab', (event, { tabId }) => {
+        if (!tabId) return;
+        const switched = browserManager.setActiveTab(tabId, { emit: true });
+        if (!switched) {
+            console.warn(`[IPC:activate-tab] Tab ${tabId} not found`);
         }
     });
 
@@ -67,6 +85,7 @@ export function registerBrowserHandlers() {
     ipcMain.on('browser:close-tab', async (event, { tabId }) => {
         const entry = browserManager.userTabs.get(tabId);
         if (!entry) return;
+        const wasActive = browserManager.activeTabId === tabId;
 
         if (entry.electronBrowserView) {
             try {
@@ -86,7 +105,20 @@ export function registerBrowserHandlers() {
         }
 
         browserManager.userTabs.delete(tabId);
-        if (browserManager.activeTabId === tabId) browserManager.activeTabId = null;
+        browserManager.sendToRenderer('browser:user-tab-closed', { tabId });
+
+        if (wasActive) {
+            const fallbackTabId = Array.from(browserManager.userTabs.keys()).pop() || null;
+            if (fallbackTabId) {
+                browserManager.setActiveTab(fallbackTabId, { emit: true });
+            } else {
+                browserManager.activeTabId = null;
+                global.activeTabId = null;
+            }
+        } else {
+            browserManager.hideNonActiveViews(browserManager.activeTabId);
+        }
+
         console.log(`[IPC:close-tab] Closed tab ${tabId}`);
     });
 
@@ -103,6 +135,9 @@ export function registerBrowserHandlers() {
     });
 
     ipcMain.on('browser:resize-viewport', (event, { tabId, bounds }) => {
+        if (!tabId || !bounds) return;
+        browserManager.setActiveTab(tabId, { emit: false });
+
         const width = Math.round(bounds.width);
         const height = Math.round(bounds.height);
 
@@ -120,6 +155,7 @@ export function registerBrowserHandlers() {
 
         const view = browserManager.ensureBrowserView(tabId);
         if (view && !view.webContents.isDestroyed()) {
+            browserManager.hideNonActiveViews(tabId);
             view.setBounds({
                 x: Math.round(bounds.x),
                 y: Math.round(bounds.y),

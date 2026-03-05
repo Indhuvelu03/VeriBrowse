@@ -74,6 +74,8 @@ const SITE_MAP = {
 
 // Detects multi-step / compound instructions that should NOT be QUICK_ACTION
 const MULTI_STEP_PATTERN = /,?\s+(then|and then|after that|next|also|followed by|go back|scroll down|scroll up|click on|search for|apply|filter|fill|type|submit)/i;
+const TASK_TAIL_PATTERN = /\b(find|get|search|compare|best|top|under|below|between|show|list|sort|review|rating|price|buy|select|choose)\b/i;
+const POLITE_TAIL_PATTERN = /^(please|pls|now|thanks|thank you|site|website)\b[\s.!?]*$/i;
 
 /**
  * Stage 1: Try to classify without an LLM call.
@@ -110,17 +112,26 @@ function heuristicClassify(input) {
     // 3. Navigation command: "go to X", "open Y" — only for simple single-destination commands
     if (NAVIGATE_PATTERNS.test(lower)) {
         const sitePart = lower.replace(NAVIGATE_PATTERNS, '').trim();
-        // If the remainder contains multi-step instructions, route to LONG_HORIZON
-        if (MULTI_STEP_PATTERN.test(sitePart)) {
+        const { url, remainder } = resolveNavigationWithTail(sitePart);
+
+        // If the remainder contains task intent, route to LONG_HORIZON.
+        // Example: "go to flipkart and find best laptop under 30k"
+        const hasTaskTail =
+            remainder &&
+            remainder.length > 0 &&
+            !POLITE_TAIL_PATTERN.test(remainder) &&
+            (MULTI_STEP_PATTERN.test(` ${remainder}`) || TASK_TAIL_PATTERN.test(remainder) || hasLongHorizonKeyword(remainder));
+
+        if (hasTaskTail) {
             return {
                 intent_type: Intents.LONG_HORIZON,
                 confidence_score: 0.92,
-                reasoning_summary: 'Navigate + multi-step instructions detected',
+                reasoning_summary: 'Navigate + task instructions detected',
                 response: null,
                 url: null,
             };
         }
-        const url = resolveUrl(sitePart);
+
         if (url) {
             return {
                 intent_type: Intents.QUICK_ACTION,
@@ -174,17 +185,42 @@ function hasLongHorizonKeyword(lower) {
     return LONG_HORIZON_KEYWORDS.some(kw => lower.includes(kw));
 }
 
-function resolveUrl(sitePart) {
-    // Extract only the first token (URL stops at space or comma)
-    const token = sitePart.split(/[\s,]/)[0].trim();
-    if (token.startsWith('http')) return token;
-    if (token.includes('.')) return `https://${token}`;
-    if (SITE_MAP[token]) return SITE_MAP[token];
-    // If it looks like a single word that could be a site
-    if (/^[a-z0-9]+$/i.test(token) && token.length > 2) {
-        return `https://www.${token}.com`;
+/**
+ * Resolve navigation target and preserve the remaining text after the destination.
+ * This lets heuristics detect compound requests like:
+ * "go to amazon and find best mobile under 40k"
+ */
+function resolveNavigationWithTail(sitePart) {
+    const cleaned = String(sitePart || '').trim().replace(/\s+/g, ' ');
+    if (!cleaned) return { url: null, remainder: '' };
+
+    const parts = cleaned.split(' ');
+    const first = parts[0];
+    const firstTwo = parts.slice(0, 2).join(' ');
+
+    let consumed = 0;
+    let url = null;
+
+    if (first.startsWith('http')) {
+        url = first;
+        consumed = 1;
+    } else if (first.includes('.')) {
+        url = `https://${first}`;
+        consumed = 1;
+    } else if (SITE_MAP[firstTwo]) {
+        url = SITE_MAP[firstTwo];
+        consumed = 2;
+    } else if (SITE_MAP[first]) {
+        url = SITE_MAP[first];
+        consumed = 1;
+    } else if (/^[a-z0-9]+$/i.test(first) && first.length > 2) {
+        url = `https://www.${first}.com`;
+        consumed = 1;
     }
-    return null;
+
+    const rawRemainder = parts.slice(consumed).join(' ').trim();
+    const remainder = rawRemainder.replace(/^(and|to)\s+/, '').trim();
+    return { url, remainder };
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────

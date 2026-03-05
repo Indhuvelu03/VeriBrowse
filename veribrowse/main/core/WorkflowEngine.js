@@ -449,7 +449,7 @@ class WorkflowEngine {
                 const page = browserManager.getPage(tabId);
                 let failureShot = null;
                 if (page) {
-                    failureShot = await page.screenshot({ encoding: 'base64' }).catch(e => {
+                    failureShot = await page.screenshot({ type: 'png' }).then(buf => buf.toString('base64')).catch(e => {
                         console.warn('[WorkflowEngine] Could not capture failure screenshot:', e.message);
                         return null;
                     });

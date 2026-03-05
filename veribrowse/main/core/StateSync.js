@@ -56,13 +56,22 @@ function notifyRenderer(tabId, payload) {
  * Shadow tabs have no view — this no-ops silently for them.
  */
 async function syncView(tabId, url) {
+    // Ignore internal/invalid schemes for Electron WebContentsView sync.
+    if (!url || url === 'about:blank' || url.startsWith('chrome-error://') || url.startsWith('chrome://') || url.startsWith('devtools://')) {
+        return;
+    }
+
     try {
         const entry = browserManager.userTabs.get(tabId);
         const view = entry?.electronBrowserView;
         if (view && !view.webContents.isDestroyed()) {
+            const currentViewUrl = view.webContents.getURL();
+            if (currentViewUrl === url) return;
             await view.webContents.loadURL(url);
         }
     } catch (e) {
+        // ERR_ABORTED (-3) is expected when a newer navigation supersedes a previous one.
+        if (String(e?.message || '').includes('ERR_ABORTED') || String(e?.message || '').includes('(-3)')) return;
         console.warn(`[StateSync:${tabId}] WebContentsView sync failed: ${e.message}`);
     }
 }
@@ -86,10 +95,44 @@ export function attachStateSync(page, tabId) {
     // Track the last URL we emitted to avoid duplicate renderer updates
     // when both 'framenavigated' and 'load' fire for the same navigation.
     let _lastEmittedUrl = null;
+    let _lastEmittedTitle = null;
 
     // Request counter for the loading spinner
     let _activeRequests = 0;
     let _spinnerTimer = null;
+    let _urlPollTimer = null;
+    let _urlPollInFlight = false;
+
+    async function publishCurrentLocation(source = 'poll') {
+        if (_urlPollInFlight) return;
+        _urlPollInFlight = true;
+        try {
+            const url = page.url();
+            const title = await safeTitle(page);
+            const changed = url !== _lastEmittedUrl || title !== _lastEmittedTitle;
+            if (!changed) return;
+
+            if (url !== _lastEmittedUrl) {
+                syncView(tabId, url);
+            }
+            _lastEmittedUrl = url;
+            _lastEmittedTitle = title;
+
+            notifyRenderer(tabId, { url, title, isLoading: false });
+            const isShadow = tabId.startsWith('shadow-');
+            const map = isShadow ? browserManager.shadowTabs : browserManager.userTabs;
+            const existing = map.get(tabId);
+            if (existing) {
+                map.set(tabId, { ...existing, url, title });
+            }
+
+            if (source === 'poll') {
+                console.log(`${tag} urlwatch → ${url}`);
+            }
+        } finally {
+            _urlPollInFlight = false;
+        }
+    }
 
     // ── framenavigated: fires after every navigation (SPA-friendly) ──────────
     page.on('framenavigated', async (frame) => {
@@ -105,6 +148,7 @@ export function attachStateSync(page, tabId) {
             syncView(tabId, url);
             _lastEmittedUrl = url;
         }
+        _lastEmittedTitle = title;
 
         notifyRenderer(tabId, { url, title, isLoading: false });
 
@@ -129,6 +173,7 @@ export function attachStateSync(page, tabId) {
             syncView(tabId, url);
             _lastEmittedUrl = url;
         }
+        _lastEmittedTitle = title;
 
         notifyRenderer(tabId, { url, title, isLoading: false });
 
@@ -177,13 +222,19 @@ export function attachStateSync(page, tabId) {
     page.on('requestfinished', onRequestDone);
     page.on('requestfailed', onRequestDone);
 
+    _urlPollTimer = setInterval(() => {
+        publishCurrentLocation('poll').catch(() => { });
+    }, 1000);
+
     // ── close: cleanup ────────────────────────────────────────────────────────
     page.on('close', () => {
         clearTimeout(_spinnerTimer);
+        clearInterval(_urlPollTimer);
         console.log(`${tag} Page closed.`);
         notifyRenderer(tabId, { isLoading: false });
     });
 
+    publishCurrentLocation('initial').catch(() => { });
     console.log(`${tag} Event-driven state sync attached.`);
 }
 

@@ -42,6 +42,13 @@ export default async function executeAction(action, page) {
 
             // Wait for potential navigation after click
             await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
+
+            // Auth submits often redirect asynchronously after XHR; give them extra settle time.
+            const clickIntent = `${action.text || ''} ${action.reasoning || ''} ${action.goalText || ''} ${action.selector || ''}`;
+            if (/\b(log\s*in|login|sign\s*in|signin|submit)\b/i.test(clickIntent)) {
+                await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+                await page.waitForTimeout(rand(900, 1600));
+            }
             break;
         }
 
@@ -51,6 +58,7 @@ export default async function executeAction(action, page) {
                 type:        'type',
                 selector:    action.selector || null,
                 text:        action.text || '',
+                fieldHint:   action.fieldHint || action.goalText || action.reasoning || null,
                 clear:       true,
                 pressEnter:  action.pressEnter || action.text?.endsWith('\n') || false,
                 waitAfter:   rand(800, 1600),

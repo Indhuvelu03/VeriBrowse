@@ -145,8 +145,7 @@ class BrowserManager {
 
         const page = await this.context.newPage();
         this.userTabs.set(tabId, { playwrightPage: page, url, title: 'New Tab', type: 'user' });
-        this.activeTabId = tabId;
-        global.activeTabId = tabId;
+        this.setActiveTab(tabId, { emit: false });
 
         // Auto-wire StateSync so navigations are always tracked
         const attach = await getAttachStateSync();
@@ -187,6 +186,36 @@ class BrowserManager {
         const tabId = this.activeTabId || Array.from(this.userTabs.keys())[0];
         const entry = this.userTabs.get(tabId);
         return { tabId, entry };
+    }
+
+    /**
+     * Mark a user tab as active and optionally notify the renderer.
+     * Also hides all other user WebContentsViews to prevent native-layer overlap.
+     */
+    setActiveTab(tabId, { emit = true } = {}) {
+        if (!tabId || !this.userTabs.has(tabId)) return false;
+        this.activeTabId = tabId;
+        global.activeTabId = tabId;
+        this.hideNonActiveViews(tabId);
+        if (emit) {
+            this.sendToRenderer('browser:user-tab-switched', { tabId });
+        }
+        return true;
+    }
+
+    /**
+     * Hide every user tab native view except the active one.
+     * This guarantees one visible browser surface at a time.
+     */
+    hideNonActiveViews(activeTabId = this.activeTabId) {
+        for (const [id, entry] of this.userTabs.entries()) {
+            if (id === activeTabId) continue;
+            if (entry?.electronBrowserView) {
+                try {
+                    entry.electronBrowserView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+                } catch { }
+            }
+        }
     }
 
     // ─── Shadow Tabs (Z-Axis Background Workspace) ─────────────────────

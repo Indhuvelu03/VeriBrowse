@@ -31,6 +31,7 @@ export const useWorkflowStore = create(
             summary: null,
             error: null,
             creditsUsed: 0,
+            livePreview: null,
 
             // Actions
             newSession: () => {
@@ -58,7 +59,8 @@ export const useWorkflowStore = create(
                     steps: [],
                     summary: null,
                     goal: '',
-                    agentStatus: 'idle'
+                    agentStatus: 'idle',
+                    livePreview: null
                 }));
             },
 
@@ -103,7 +105,8 @@ export const useWorkflowStore = create(
                     steps: [],
                     summary: null,
                     error: null,
-                    agentStatus: 'planning'
+                    agentStatus: 'planning',
+                    livePreview: null
                 });
 
                 if (window.electronAPI?.agent) {
@@ -168,7 +171,7 @@ export const useWorkflowStore = create(
             })),
 
             setSummary: (summary) => {
-                set({ summary, isRunning: false, agentStatus: 'idle' });
+                set({ summary, isRunning: false, agentStatus: 'idle', livePreview: null });
                 get().addMessage('agent', summary);
             },
 
@@ -189,7 +192,8 @@ export const useWorkflowStore = create(
             }),
 
             setCredits: (used) => set({ creditsUsed: used }),
-            setError: (error) => set({ error, isRunning: false, agentStatus: 'idle' }),
+            setError: (error) => set({ error, isRunning: false, agentStatus: 'idle', livePreview: null }),
+            setLivePreview: (preview) => set({ livePreview: preview }),
 
             // Cancel the currently running workflow/task
             cancelWorkflow: () => {
@@ -203,7 +207,8 @@ export const useWorkflowStore = create(
                     isPaused: false,
                     needsHuman: false,
                     agentStatus: 'idle',
-                    error: 'Cancelled by user'
+                    error: 'Cancelled by user',
+                    livePreview: null
                 });
                 get().addMessage('agent', '⏹️ Task cancelled by user.');
             }

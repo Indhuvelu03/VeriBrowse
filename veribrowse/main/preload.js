@@ -22,6 +22,7 @@ const allowedChannels = [
   'browser:user-tab-updated',
   'browser:user-tab-closed',
   'browser:user-tab-switched',
+  'browser:live-frame',
   'browser:shadow-tab-created',
   'browser:shadow-tab-updated',
   'browser:shadow-tab-closed',
@@ -65,6 +66,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     refresh: (tabId) => ipcRenderer.send('browser:refresh', { tabId }),
     resizeViewport: (tabId, bounds) => ipcRenderer.send('browser:resize-viewport', { tabId, bounds }),
     hideViewport: (tabId) => ipcRenderer.send('browser:hide-viewport', { tabId }),
+    activateTab: (tabId) => ipcRenderer.send('browser:activate-tab', { tabId }),
     newTab: (tabId, url) => ipcRenderer.send('browser:new-tab', { tabId, url }),
     // Destroys the Playwright page + BrowserView for the given tab
     closeTab: (tabId) => ipcRenderer.send('browser:close-tab', { tabId }),

@@ -72,13 +72,22 @@ export const useTabStore = create((set, get) => ({
         return { userTabs: newTabs, activeTabId: newActiveId };
     }),
 
-    setActiveTab: (tabId) => {
+    setActiveTab: (tabId, options = {}) => {
+        const { fromMain = false } = options;
+        const prevActiveTabId = get().activeTabId;
         const tab = get().userTabs.find(t => t.id === tabId);
         set({
             activeTabId: tabId,
             canGoBack: tab?.canGoBack || false,
             canGoForward: tab?.canGoForward || false
         });
+
+        if (!fromMain && window.electronAPI?.browser) {
+            if (prevActiveTabId && prevActiveTabId !== tabId) {
+                window.electronAPI.browser.hideViewport(prevActiveTabId);
+            }
+            window.electronAPI.browser.activateTab(tabId);
+        }
     },
 
     // Browser Actions

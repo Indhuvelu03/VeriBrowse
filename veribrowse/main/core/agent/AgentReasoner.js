@@ -53,6 +53,65 @@ function buildPageContext(compact) {
     ].join('\n\n');
 }
 
+/**
+ * Parse JSON from model output that may include markdown fences or extra text.
+ */
+function parseModelJSON(raw, tag = 'AgentReasoner') {
+    if (raw && typeof raw === 'object') return raw;
+
+    const text = String(raw || '').trim();
+    if (!text) throw new Error(`[${tag}] Empty model response`);
+
+    const candidates = [];
+
+    // Raw text as-is.
+    candidates.push(text);
+
+    // Strip markdown fences.
+    candidates.push(
+        text
+            .replace(/^[`~]{3,}(?:json)?\s*/i, '')
+            .replace(/\s*[`~]{3,}\s*$/i, '')
+            .trim()
+    );
+
+    // Remove leading "json" token if present.
+    candidates.push(
+        text
+            .replace(/^json\s*/i, '')
+            .replace(/^[`~]{3,}(?:json)?\s*/i, '')
+            .replace(/\s*[`~]{3,}\s*$/i, '')
+            .trim()
+    );
+
+    // Extract from first JSON opener to matching closer.
+    const normalized = candidates[candidates.length - 1];
+    const objStart = normalized.indexOf('{');
+    const arrStart = normalized.indexOf('[');
+    const starts = [objStart, arrStart].filter(i => i >= 0);
+    if (starts.length > 0) {
+        const start = Math.min(...starts);
+        const opener = normalized[start];
+        const closer = opener === '[' ? ']' : '}';
+        const end = normalized.lastIndexOf(closer);
+        if (end > start) {
+            candidates.push(normalized.slice(start, end + 1).trim());
+        }
+    }
+
+    let lastError = null;
+    for (const candidate of candidates) {
+        if (!candidate) continue;
+        try {
+            return JSON.parse(candidate);
+        } catch (e) {
+            lastError = e;
+        }
+    }
+
+    throw new Error(`[${tag}] JSON parse failed: ${lastError?.message || 'unknown error'}`);
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────
 
 /**
@@ -89,7 +148,7 @@ export async function planSteps(goal, snapshot = null, screenshot = null) {
     if (screenshot) {
         try {
             const raw = await vision(userPrompt, screenshot);
-            plan = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            plan = parseModelJSON(raw, 'AgentReasoner:planSteps');
         } catch (e) {
             console.warn('[AgentReasoner:planSteps] Vision failed, falling back to text:', e.message);
             plan = await generateJSON(userPrompt);
@@ -147,7 +206,7 @@ export async function repairSelector(failedSelector, goalDescription, snapshot, 
     if (screenshot) {
         try {
             const raw = await vision(userPrompt, screenshot);
-            result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            result = parseModelJSON(raw, 'AgentReasoner:repairSelector');
         } catch (e) {
             console.warn('[AgentReasoner:repairSelector] Vision failed, falling back to text:', e.message);
             result = await generateJSON(userPrompt);
@@ -200,7 +259,7 @@ export async function replan(goal, completedSteps, remainingPlan, stuckReason, s
     if (screenshot) {
         try {
             const raw = await vision(userPrompt, screenshot);
-            plan = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            plan = parseModelJSON(raw, 'AgentReasoner:replan');
         } catch (e) {
             console.warn('[AgentReasoner:replan] Vision failed, falling back to text:', e.message);
             plan = await generateJSON(userPrompt);
@@ -268,7 +327,7 @@ export async function decideSingleAction(task, snapshot, screenshot = null, hist
     if (screenshot) {
         try {
             const raw = await vision(fullPrompt, screenshot);
-            action = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            action = parseModelJSON(raw, 'AgentReasoner:decideSingleAction');
         } catch (e) {
             console.warn('[AgentReasoner:decideSingleAction] Vision failed, fallback:', e.message);
             action = await generateJSON(fullPrompt);

@@ -142,8 +142,13 @@ async function _handleType(page, descriptor) {
             pressEnter:     descriptor.pressEnter  || false,
             waitAfterEnter: descriptor.waitAfter   || 1500,
             moveCursor:     true,
+            fieldHint:      descriptor.fieldHint   || null,
         }
     );
+
+    if (result?.usedSelector) {
+        console.log(`[InteractionEngine] Type target → ${result.usedSelector}`);
+    }
 
     return result;
 }

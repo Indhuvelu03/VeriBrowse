@@ -27,7 +27,8 @@ export default function AgentPanel() {
         goal,
         summary,
         isRunning,
-        steps
+        steps,
+        livePreview
     } = useWorkflowStore();
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -155,6 +156,24 @@ export default function AgentPanel() {
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            {isRunning && livePreview?.frame && (
+                <div className="px-4 pt-3">
+                    <div className="rounded-2xl border border-white/10 bg-black/40 overflow-hidden">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                            src={`data:image/jpeg;base64,${livePreview.frame}`}
+                            alt="Live browser preview"
+                            className="w-full h-40 object-cover"
+                        />
+                        <div className="px-3 py-2 border-t border-white/10">
+                            <p className="text-[10px] text-gray-300 truncate">
+                                {livePreview.title || livePreview.url || 'Live browser preview'}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Content Area */}
             <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-hide flex flex-col py-4 px-4 gap-3">

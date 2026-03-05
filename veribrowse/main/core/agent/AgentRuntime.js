@@ -23,6 +23,7 @@ import bus from '../EventBus.js';
 import UIFeedback from '../UIFeedback.js';
 import compactor from '../ContextCompactor.js';
 import * as CreditGuard from '../CreditGuard.js';
+import { startLivePreview } from '../LivePreview.js';
 import { DEEP_SUMMARY_PROMPT } from '../../constants.js';
 
 // ─── Runtime State ──────────────────────────────────────────────────────
@@ -60,6 +61,7 @@ export async function start(page, goal, options = {}) {
 
     emitStatus('Starting autonomous agent…', 'executing');
     console.log(`[AgentRuntime] Starting task: "${goal}"`);
+    const stopLivePreview = startLivePreview(page);
 
     try {
         const result = await autonomousLoop(page, goal, {
@@ -197,6 +199,7 @@ export async function start(page, goal, options = {}) {
         bus.emit('agent:error', { error: err.message });
         return { success: false, result: { error: err.message } };
     } finally {
+        stopLivePreview();
         currentAbort = null;
     }
 }

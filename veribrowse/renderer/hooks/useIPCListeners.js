@@ -21,7 +21,8 @@ export default function useIPCListeners() {
         setError,
         setCredits,
         setSteps,
-        addMessage
+        addMessage,
+        setLivePreview
     } = useWorkflowStore();
     const { addToast, setActiveView, closeOverlays } = useUIStore();
 
@@ -58,7 +59,7 @@ export default function useIPCListeners() {
 
 
         api.on('browser:user-tab-switched', ({ tabId }) => {
-            setActiveTab(tabId);
+            setActiveTab(tabId, { fromMain: true });
         });
 
         api.on('browser:user-tab-closed', ({ tabId }) => {
@@ -80,6 +81,51 @@ export default function useIPCListeners() {
 
         api.on('browser:shadow-tab-closed', ({ tabId }) => {
             removeShadowTab(tabId);
+        });
+
+        api.on('browser:live-frame', (data) => {
+            setLivePreview(data);
+            const isShadow = String(data?.tabId || '').startsWith('shadow-');
+
+            if (isShadow) {
+                const { shadowTabs } = useTabStore.getState();
+                if (!shadowTabs.find(t => t.id === data.tabId)) {
+                    addShadowTab({
+                        id: data.tabId,
+                        url: data.url || 'about:blank',
+                        title: data.title || 'Shadow Tab',
+                        isLoading: true,
+                        liveFrame: data.frame,
+                    });
+                } else {
+                    updateShadowTab(data.tabId, {
+                        url: data.url,
+                        title: data.title,
+                        isLoading: true,
+                        liveFrame: data.frame,
+                    });
+                }
+                return;
+            }
+
+            const { userTabs } = useTabStore.getState();
+            if (!userTabs.find(t => t.id === data.tabId)) {
+                addTab({
+                    id: data.tabId,
+                    url: data.url || 'about:blank',
+                    title: data.title || 'Live Tab',
+                    favicon: null,
+                    isLoading: true,
+                    liveFrame: data.frame,
+                });
+            } else {
+                updateTab(data.tabId, {
+                    url: data.url,
+                    title: data.title,
+                    isLoading: true,
+                    liveFrame: data.frame,
+                });
+            }
         });
 
         // --- WORKFLOW / STEP EVENTS ---
@@ -124,7 +170,14 @@ export default function useIPCListeners() {
         });
 
         api.on('agent:error', ({ error }) => {
+            const preview = useWorkflowStore.getState().livePreview;
+            if (preview?.tabId) {
+                const isShadow = String(preview.tabId).startsWith('shadow-');
+                if (isShadow) updateShadowTab(preview.tabId, { isLoading: false });
+                else updateTab(preview.tabId, { isLoading: false });
+            }
             setError(error);
+            setLivePreview(null);
             addToast(`Error: ${error}`, 'error');
         });
 
@@ -205,7 +258,14 @@ export default function useIPCListeners() {
         });
 
         api.on('agent:autonomous-done', ({ result }) => {
+            const preview = useWorkflowStore.getState().livePreview;
+            if (preview?.tabId) {
+                const isShadow = String(preview.tabId).startsWith('shadow-');
+                if (isShadow) updateShadowTab(preview.tabId, { isLoading: false });
+                else updateTab(preview.tabId, { isLoading: false });
+            }
             updateStatus({ status: 'idle', message: 'Ready' });
+            setLivePreview(null);
             useWorkflowStore.setState({ isRunning: false, agentStatus: 'idle' });
             // NOTE: do NOT call setSummary here — agent:execution-step DONE already set it.
             // Calling setSummary again would duplicate the completion message in the chat.
@@ -231,6 +291,7 @@ export default function useIPCListeners() {
                 'browser:user-tab-updated',
                 'browser:user-tab-switched',
                 'browser:user-tab-closed',
+                'browser:live-frame',
                 'workflow:step-updated',
                 'workflow:paused',
                 'workflow:resumed',

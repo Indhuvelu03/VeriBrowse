@@ -37,16 +37,60 @@ function triRand(min, mode, max) {
 }
 
 // ─── Selector list builder (handles input ↔ textarea duality) ────────────
-function buildSelectorList(selector) {
-    if (!selector) return [];
-    const nameMatch = selector.match(/^input\[name=['"](.*)['"]\]$/);
-    if (nameMatch) {
+function hintSelectors(fieldHint) {
+    const hint = String(fieldHint || '').toLowerCase();
+    if (!hint) return [];
+
+    if (/\b(pass(word|code)?|pwd|pin)\b/.test(hint)) {
         return [
-            `textarea[name='${nameMatch[1]}']`,
-            `input[name='${nameMatch[1]}']`
+            'input[type="password"]',
+            'input[name*="pass" i]',
+            'input[id*="pass" i]',
+            'input[autocomplete*="password" i]',
+            'input[placeholder*="password" i]',
         ];
     }
-    return [selector];
+
+    if (/\b(e-?mail|username|user id|login|phone|mobile)\b/.test(hint)) {
+        return [
+            'input[type="email"]',
+            'input[name*="email" i]',
+            'input[id*="email" i]',
+            'input[autocomplete="username"]',
+            'input[name*="user" i]',
+            'input[name*="phone" i]',
+            'input[placeholder*="email" i]',
+        ];
+    }
+
+    return [];
+}
+
+function buildSelectorList(selector, fieldHint = null) {
+    const selectors = [];
+
+    // Put hint-based selectors first so credential fields don't cross-fill.
+    selectors.push(...hintSelectors(fieldHint));
+
+    if (selector) {
+        const nameMatch = selector.match(/^input\[name=['"](.*)['"]\]$/);
+        if (nameMatch) {
+            selectors.push(`textarea[name='${nameMatch[1]}']`);
+            selectors.push(`input[name='${nameMatch[1]}']`);
+        } else {
+            selectors.push(selector);
+        }
+    }
+
+    // Keep order while deduping.
+    const seen = new Set();
+    const unique = [];
+    for (const sel of selectors) {
+        if (!sel || seen.has(sel)) continue;
+        seen.add(sel);
+        unique.push(sel);
+    }
+    return unique;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────
@@ -70,9 +114,10 @@ export async function humanType(page, selector, text, options = {}) {
         pressEnter = false,
         waitAfterEnter = 1500,
         moveCursor = true,
+        fieldHint = null,
     } = options;
 
-    const selectorList = buildSelectorList(selector);
+    const selectorList = buildSelectorList(selector, fieldHint);
 
     // ── 1. Find and focus the field ──
     let focused = false;
@@ -95,15 +140,17 @@ export async function humanType(page, selector, text, options = {}) {
         } catch { /* try next selector */ }
     }
 
-    // Fallback: first visible input/textarea on the page
+    // Fallback: hint-matched visible input/textarea first, then generic first field.
     if (!focused) {
         try {
             // Longer timeout for heavy pages like Amazon — wait for actual render
-            const fb = page.locator('textarea:visible, input:not([type="hidden"]):visible').first();
+            const hintQuery = hintSelectors(fieldHint).join(', ');
+            const fallbackQuery = hintQuery || 'textarea:visible, input:not([type="hidden"]):visible';
+            const fb = page.locator(fallbackQuery).first();
             await fb.waitFor({ state: 'visible', timeout: 8000 });
             await fb.click({ timeout: 5000 });
             focused = true;
-            usedSelector = 'first-visible-input';
+            usedSelector = hintQuery ? 'hinted-visible-input' : 'first-visible-input';
         } catch (e) {
             throw new Error(`[HumanType] Could not focus any input field: ${e.message}`);
         }

@@ -35,6 +35,51 @@ function getDomain(url) {
     }
 }
 
+function escAttrValue(value) {
+    return String(value || '')
+        .replace(/\\/g, '\\\\')
+        .replace(/"/g, '\\"')
+        .trim();
+}
+
+function toSpecificInputSelector(el) {
+    if (!el) return null;
+
+    const tag = (el.tag || 'input').toLowerCase();
+    const type = (el.type || '').toLowerCase().trim();
+    const name = (el.name || '').trim();
+    const autocomplete = (el.autocomplete || '').trim();
+    const placeholder = (el.placeholder || '').trim();
+    const ariaLabel = (el.ariaLabel || '').trim();
+    const baseSelector = (el.selector || '').trim();
+
+    // If selector already looks specific, keep it.
+    if (baseSelector && !/^input$|^textarea$|^select$/i.test(baseSelector)) {
+        return baseSelector;
+    }
+
+    if (name && type && tag === 'input') {
+        return `input[name="${escAttrValue(name)}"][type="${escAttrValue(type)}"]`;
+    }
+    if (name) {
+        return `${tag}[name="${escAttrValue(name)}"]`;
+    }
+    if (type && tag === 'input') {
+        return `input[type="${escAttrValue(type)}"]`;
+    }
+    if (autocomplete) {
+        return `${tag}[autocomplete="${escAttrValue(autocomplete)}"]`;
+    }
+    if (ariaLabel) {
+        return `${tag}[aria-label="${escAttrValue(ariaLabel)}"]`;
+    }
+    if (placeholder) {
+        return `${tag}[placeholder="${escAttrValue(placeholder)}"]`;
+    }
+
+    return baseSelector || tag;
+}
+
 /**
  * Evict oldest entries if cache exceeds MAX_CACHE_SIZE.
  */
@@ -106,15 +151,25 @@ function heuristicSearch(goalText, snapshot) {
         ...(snapshot.buttons || []).map(b => ({ ...b, _source: 'button' })),
         ...(snapshot.links || []).map(l => ({ ...l, _source: 'link' })),
         ...(snapshot.interactiveElements || []).map(e => ({ ...e, _source: 'interactive' })),
-        ...(snapshot.inputs || []).map(i => ({ ...i, _source: 'input', text: i.placeholder || i.value || '' })),
+        ...(snapshot.inputs || []).map(i => ({
+            ...i,
+            _source: 'input',
+            text: i.placeholder || i.value || '',
+            tag: i.tag || 'input',
+            type: i.type || '',
+            name: i.name || '',
+            autocomplete: i.autocomplete || '',
+            ariaLabel: i.ariaLabel || '',
+        })),
     ];
 
     // Strategy 1: Exact text match
     for (const el of allElements) {
         const elText = (el.text || '').toLowerCase().trim();
         if (elText === goal && el.visible !== false) {
-            console.log(`[LocalSelector] Heuristic: exact text match → "${el.selector}"`);
-            return { selector: el.selector, fallbackText: el.text, method: 'exact-text' };
+            const selector = el._source === 'input' ? toSpecificInputSelector(el) : el.selector;
+            console.log(`[LocalSelector] Heuristic: exact text match → "${selector}"`);
+            return { selector, fallbackText: el.text, method: 'exact-text' };
         }
     }
 
@@ -122,8 +177,9 @@ function heuristicSearch(goalText, snapshot) {
     for (const el of allElements) {
         const elText = (el.text || '').toLowerCase().trim();
         if (elText && elText.includes(goal) && el.visible !== false) {
-            console.log(`[LocalSelector] Heuristic: partial text match → "${el.selector}"`);
-            return { selector: el.selector, fallbackText: el.text, method: 'partial-text' };
+            const selector = el._source === 'input' ? toSpecificInputSelector(el) : el.selector;
+            console.log(`[LocalSelector] Heuristic: partial text match → "${selector}"`);
+            return { selector, fallbackText: el.text, method: 'partial-text' };
         }
     }
 
@@ -131,8 +187,9 @@ function heuristicSearch(goalText, snapshot) {
     for (const el of allElements) {
         const elText = (el.text || '').toLowerCase().trim();
         if (elText && elText.length > 2 && goal.includes(elText) && el.visible !== false) {
-            console.log(`[LocalSelector] Heuristic: reverse partial match → "${el.selector}"`);
-            return { selector: el.selector, fallbackText: el.text, method: 'reverse-partial' };
+            const selector = el._source === 'input' ? toSpecificInputSelector(el) : el.selector;
+            console.log(`[LocalSelector] Heuristic: reverse partial match → "${selector}"`);
+            return { selector, fallbackText: el.text, method: 'reverse-partial' };
         }
     }
 
@@ -140,18 +197,21 @@ function heuristicSearch(goalText, snapshot) {
     for (const el of snapshot.inputs || []) {
         const placeholder = (el.placeholder || '').toLowerCase();
         if (placeholder && (placeholder.includes(goal) || goal.includes(placeholder)) && el.visible !== false) {
-            console.log(`[LocalSelector] Heuristic: placeholder match → "${el.selector}"`);
-            return { selector: el.selector, fallbackText: null, method: 'placeholder' };
+            const selector = toSpecificInputSelector(el);
+            console.log(`[LocalSelector] Heuristic: placeholder match → "${selector}"`);
+            return { selector, fallbackText: null, method: 'placeholder' };
         }
     }
 
     // Strategy 4: Role-based patterns
     const rolePatterns = [
+        { keywords: ['email', 'e-mail', 'username', 'user', 'phone', 'mobile'], selectors: ['input[type="email"]', 'input[name*="email" i]', 'input[name*="user" i]', 'input[autocomplete="username"]', 'input[name*="phone" i]', 'input[placeholder*="email" i]'] },
+        { keywords: ['password', 'passcode', 'pwd', 'pin'], selectors: ['input[type="password"]', 'input[name*="pass" i]', 'input[autocomplete*="password" i]', 'input[placeholder*="password" i]'] },
         { keywords: ['search', 'find', 'query'], selectors: ['input[type="search"]', 'input[name*="search"]', 'input[placeholder*="search" i]', '[role="searchbox"]'] },
         { keywords: ['submit', 'send', 'go'], selectors: ['button[type="submit"]', 'input[type="submit"]'] },
         { keywords: ['close', 'dismiss', 'cancel'], selectors: ['button[aria-label="Close"]', 'button[aria-label="Dismiss"]', '.close-button', '.dismiss'] },
         { keywords: ['menu', 'hamburger', 'nav'], selectors: ['button[aria-label="Menu"]', '[role="navigation"] button', '.hamburger', '.menu-toggle'] },
-        { keywords: ['login', 'sign in', 'signin'], selectors: ['a[href*="login"]', 'a[href*="signin"]', 'button:has-text("Sign in")', 'button:has-text("Log in")'] },
+        { keywords: ['login', 'log in', 'sign in', 'signin'], selectors: ['button:has-text("Log in")', 'button:has-text("Sign in")', 'button[type="submit"]', 'a[href*="login"]', 'a[href*="signin"]'] },
         // Sort/filter dropdowns on e-commerce pages (Amazon, eBay, etc.)
         { keywords: ['sort', 'sort by', 'featured', 'relevance', 'filter'], selectors: ['.a-dropdown-prompt', '[id*="sort"]', 'span[id$="announce"]', '[aria-label*="sort" i]', 'select[name*="sort" i]'] },
         // Generic dropdown/combobox
