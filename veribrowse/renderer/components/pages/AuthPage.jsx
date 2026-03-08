@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Mail, Lock, User, ArrowRight, AlertCircle, Loader, Eye, EyeOff } from 'lucide-react';
+import { Mail, Lock, User, ArrowRight, AlertCircle, Loader, Eye, EyeOff, Minimize2, Maximize2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '../../store/authStore';
 
@@ -135,6 +135,24 @@ export default function AuthPage() {
         }
     };
 
+    const handleMinimize = () => {
+        if (window.electronAPI?.window) {
+            window.electronAPI.window.minimize();
+        }
+    };
+
+    const handleMaximize = () => {
+        if (window.electronAPI?.window) {
+            window.electronAPI.window.maximize();
+        }
+    };
+
+    const handleClose = () => {
+        if (window.electronAPI?.window) {
+            window.electronAPI.window.close();
+        }
+    };
+
     const toggleAuthMode = (mode) => {
         setAuthMode(mode);
         setFormData({ email: '', password: '', displayName: '', confirmPassword: '' });
@@ -142,7 +160,37 @@ export default function AuthPage() {
     };
 
     return (
-        <div className="w-full h-full bg-gradient-to-br from-obsidian via-obsidian to-black flex items-center justify-center relative overflow-hidden">
+        <div className="w-full h-full bg-gradient-to-br from-obsidian via-obsidian to-black flex flex-col relative overflow-hidden">
+            {/* Window Titlebar */}
+            <div className="h-14 bg-white/[0.02] border-b border-white/10 flex items-center justify-between px-6 drag-area">
+                <div className="flex-1" />
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleMinimize}
+                        className="p-2 text-gray-400 hover:text-white transition-colors hover:bg-white/5 rounded-lg"
+                        title="Minimize"
+                    >
+                        <Minimize2 size={18} />
+                    </button>
+                    <button
+                        onClick={handleMaximize}
+                        className="p-2 text-gray-400 hover:text-white transition-colors hover:bg-white/5 rounded-lg"
+                        title="Maximize"
+                    >
+                        <Maximize2 size={18} />
+                    </button>
+                    <button
+                        onClick={handleClose}
+                        className="p-2 text-gray-400 hover:text-red-400 transition-colors hover:bg-red-500/10 rounded-lg"
+                        title="Close"
+                    >
+                        <X size={18} />
+                    </button>
+                </div>
+            </div>
+
+            {/* Main content area */}
+            <div className="flex-1 flex items-center justify-center relative overflow-hidden">
             {/* Background effects */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl" />
@@ -370,7 +418,8 @@ export default function AuthPage() {
                 >
                     Secure authentication powered by Firebase
                 </motion.p>
-            </motion.div>
-        </div>
+                        </motion.div>
+                        </div>
+            </div>
     );
 }
