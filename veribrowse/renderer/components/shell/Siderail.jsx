@@ -1,8 +1,9 @@
 'use client';
 
 import React from 'react';
-import { Home, Bot, History, Download, Settings, User, Sparkles } from 'lucide-react';
+import { Home, Bot, History, Download, Settings, User } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
+import { useAuthStore } from '../../store/authStore';
 import { clsx } from 'clsx';
 import { motion } from 'framer-motion';
 
@@ -16,17 +17,19 @@ export default function Siderail() {
         setActiveView
     } = useUIStore();
 
+    const { currentUser, openLoginModal } = useAuthStore();
+
     const navItems = [
         { id: 'home', icon: Home, label: 'Home', action: () => { setCurrentPage('home'); setActiveView('home'); } },
         { id: 'agent', icon: Bot, label: 'Agent', action: () => toggleAgentPanel() },
-        { id: 'skills', icon: Sparkles, label: 'Skills', action: () => currentPage === 'skills' ? closeOverlays() : setCurrentPage('skills') },
+        // { id: 'skills', icon: Sparkles, label: 'Skills', action: () => currentPage === 'skills' ? closeOverlays() : setCurrentPage('skills') },
         { id: 'history', icon: History, label: 'History', action: () => currentPage === 'history' ? closeOverlays() : setCurrentPage('history') },
         { id: 'downloads', icon: Download, label: 'Downloads', action: () => currentPage === 'downloads' ? closeOverlays() : setCurrentPage('downloads') },
     ];
 
     const bottomItems = [
         { id: 'settings', icon: Settings, label: 'Settings', action: () => currentPage === 'settings' ? closeOverlays() : setCurrentPage('settings') },
-        { id: 'profile', icon: User, label: 'Profile', action: () => { } },
+        { id: 'profile', icon: User, label: currentUser ? 'Profile' : 'Sign In', action: () => currentUser ? (currentPage === 'settings' ? closeOverlays() : setCurrentPage('settings')) : openLoginModal(), badge: currentUser ? true : false },
     ];
 
     return (
@@ -54,6 +57,7 @@ export default function Siderail() {
                         item={item}
                         isActive={currentPage === item.id}
                         indicatorId="nav-indicator"
+                        badge={item.badge}
                     />
                 ))}
             </div>
@@ -61,7 +65,7 @@ export default function Siderail() {
     );
 }
 
-function NavItem({ item, isActive, indicatorId = 'nav-indicator' }) {
+function NavItem({ item, isActive, indicatorId = 'nav-indicator', badge }) {
     return (
         <div className="relative group">
             <button
@@ -78,6 +82,9 @@ function NavItem({ item, isActive, indicatorId = 'nav-indicator' }) {
                     />
                 )}
                 <item.icon size={22} className={clsx("transition-transform duration-300", isActive ? "scale-110" : "group-hover/btn:scale-110")} />
+                {badge && (
+                    <div className="absolute top-0 right-0 w-3 h-3 bg-emerald-500 rounded-full border border-obsidian" />
+                )}
             </button>
 
             {/* Tooltip */}

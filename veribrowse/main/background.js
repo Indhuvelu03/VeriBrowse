@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, screen, shell } from 'electron';
 import serve from 'electron-serve';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import Store from 'electron-store';
 
@@ -33,6 +34,7 @@ import { registerAgentHandlers } from './ipc/AgentHandlers.js';
 import { registerWindowHandlers } from './ipc/WindowHandlers.js';
 import { registerBrowserHandlers } from './ipc/BrowserHandlers.js';
 import { registerServiceHandlers } from './ipc/ServiceHandlers.js';
+import { registerAuthHandlers } from './ipc/authHandlers.js';
 import * as AgentRuntime from './core/agent/AgentRuntime.js';
 
 const isProd = process.env.NODE_ENV === 'production';
@@ -43,7 +45,13 @@ app.userAgentFallback = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/5
 if (isProd) {
   serve({ directory: 'app' });
 } else {
-  app.setPath('userData', `${app.getPath('userData')} (development)`);
+  // Use an isolated, writable profile path in dev to avoid stale LOCK/cache collisions.
+  const devProfileBase = process.env.VERIBROWSE_DEV_PROFILE_DIR || path.join(app.getPath('temp'), 'veribrowse-dev-profile');
+  const devProfilePath = `${devProfileBase}-${process.pid}`;
+  fs.mkdirSync(devProfilePath, { recursive: true });
+  app.setPath('userData', devProfilePath);
+  app.commandLine.appendSwitch('user-data-dir', devProfilePath);
+  console.log(`[Main] Using dev userData: ${devProfilePath}`);
 }
 
 // ── Bug #8 Fix: Daily credit reset ─────────────────────────────────────────
@@ -106,6 +114,7 @@ async function createWindow() {
   registerBrowserHandlers();
   registerServiceHandlers();
   registerAgentHandlers();
+  registerAuthHandlers();
 
   // --- EVENT BUS BRIDGE ---
   const bridge = (event, channel = null) => {

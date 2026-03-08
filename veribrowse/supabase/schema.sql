@@ -4,9 +4,27 @@
 -- 1. Extensions
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- 1.5. Users Table (Authentication & Profile)
+CREATE TABLE users (
+  uid TEXT PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  display_name TEXT,
+  avatar_url TEXT,
+  auth_provider TEXT DEFAULT 'firebase',
+  credits_used INTEGER DEFAULT 0,
+  credits_limit INTEGER DEFAULT 1000,
+  total_sessions INTEGER DEFAULT 0,
+  total_workflows INTEGER DEFAULT 0,
+  preferences JSONB,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  last_login TIMESTAMPTZ
+);
+
 -- 2. History Table
 CREATE TABLE history (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  uid TEXT REFERENCES users(uid) ON DELETE CASCADE,
   url TEXT NOT NULL,
   title TEXT,
   favicon_url TEXT,
@@ -17,6 +35,7 @@ CREATE TABLE history (
 -- 3. Chat History (Agent Interactions)
 CREATE TABLE chat_history (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  uid TEXT REFERENCES users(uid) ON DELETE CASCADE,
   session_id UUID NOT NULL,
   role TEXT CHECK (role IN ('user', 'agent')),
   content TEXT NOT NULL,
@@ -28,6 +47,7 @@ CREATE TABLE chat_history (
 -- 4. Downloads
 CREATE TABLE downloads (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  uid TEXT REFERENCES users(uid) ON DELETE CASCADE,
   filename TEXT NOT NULL,
   url TEXT NOT NULL,
   saved_path TEXT,
@@ -40,6 +60,7 @@ CREATE TABLE downloads (
 -- 5. Learned Agent Skills (The 'Memory')
 CREATE TABLE agent_skills (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  uid TEXT REFERENCES users(uid) ON DELETE CASCADE,
   domain TEXT NOT NULL, -- e.g. "amazon.com"
   skill_name TEXT NOT NULL, -- e.g. "Add current item to list"
   goal TEXT NOT NULL, -- The original user prompt
@@ -47,7 +68,7 @@ CREATE TABLE agent_skills (
   embedding vector(768), -- Match against user's prompt
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE(domain, skill_name)
+  UNIQUE(uid, domain, skill_name)
 );
 
 -- 6. Prompt Cache (Budget Protection)
@@ -99,9 +120,15 @@ END;
 $$;
 
 -- 8. Table Indexes
+CREATE INDEX ON users(email);
+CREATE INDEX ON users(auth_provider);
 CREATE INDEX ON history USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX ON history(uid);
 CREATE INDEX ON agent_skills USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX ON agent_skills(uid);
 CREATE INDEX ON chat_history USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-CREATE INDEX ON downloads    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX ON chat_history(uid);
 CREATE INDEX ON chat_history (session_id);
+CREATE INDEX ON downloads USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX ON downloads(uid);
 CREATE INDEX ON prompt_cache (expires_at);

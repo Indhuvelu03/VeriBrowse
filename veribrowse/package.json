@@ -6,7 +6,7 @@
   "author": "VeriBrowse Team",
   "main": "app/background.js",
   "scripts": {
-    "dev": "nextron",
+    "dev": "set NODE_OPTIONS=&& nextron",
     "build": "nextron build",
     "postinstall": "electron-builder install-app-deps",
     "lint": "eslint renderer main --ext .js,.jsx",
@@ -15,6 +15,7 @@
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
     "@supabase/supabase-js": "^2.97.0",
+    "firebase": "^10.7.0",
     "clsx": "^2.1.1",
     "dotenv": "^16.4.5",
     "electron-serve": "^1.3.0",

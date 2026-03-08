@@ -17,7 +17,7 @@
  */
 
 import autonomousLoop, { States } from './AutonomousLoop.js';
-import * as SkillMemory from './SkillMemory.js';
+// import * as SkillMemory from './SkillMemory.js';
 import * as LocalSelector from './LocalSelectorService.js';
 import bus from '../EventBus.js';
 import UIFeedback from '../UIFeedback.js';
@@ -290,7 +290,7 @@ export function getStats() {
     return {
         ...runStats,
         selectorCacheStats: LocalSelector.getStats(),
-        skillMemoryStats: SkillMemory.getStats(),
+        // skillMemoryStats: SkillMemory.getStats(),
         contextCompactorStats: compactor.getStats(),
         currentState,
         currentGoal,
