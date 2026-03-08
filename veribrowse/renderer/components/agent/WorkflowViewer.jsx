@@ -10,12 +10,12 @@ import { useUIStore } from '../../store/uiStore';
 // Human-readable status line while running
 function StatusLine({ agentStatus }) {
     const labels = {
-        planning:    'Planning steps…',
-        acting:      'Working on it…',
-        executing:   'Working on it…',
-        verifying:   'Verifying…',
-        replanning:  'Adjusting approach…',
-        thinking:    'Thinking…',
+        planning: 'Planning steps…',
+        acting: 'Working on it…',
+        executing: 'Working on it…',
+        verifying: 'Verifying…',
+        replanning: 'Adjusting approach…',
+        thinking: 'Thinking…',
         summarizing: 'Writing summary…',
     };
     const text = labels[agentStatus] || 'Working…';
@@ -38,10 +38,10 @@ export default function WorkflowViewer() {
 
     if (!isRunning && steps.length === 0) return null;
 
-    const doneCount  = steps.filter(s => s.status === 'done' || s.status === 'success').length;
-    const totalPlan  = steps.reduce((max, s) => s.totalSteps ? Math.max(max, s.totalSteps) : max, 0);
+    const doneCount = steps.filter(s => s.status === 'done' || s.status === 'success').length;
+    const totalPlan = steps.reduce((max, s) => s.totalSteps ? Math.max(max, s.totalSteps) : max, 0);
     const displayCount = totalPlan > 0 ? totalPlan : doneCount;
-    const failed    = steps.some(s => s.status === 'failed' || s.status === 'fail');
+    const failed = steps.some(s => s.status === 'failed' || s.status === 'fail');
 
     // Only show plan steps + key meta-steps; filter out noisy internal events
     const META_HIDE = new Set(['MAX_ACTIONS', 'ABORT', 'ERROR', 'CANCELLED']);
@@ -78,11 +78,10 @@ export default function WorkflowViewer() {
                         className="flex flex-col gap-2 mt-1 px-1"
                     >
                         {/* Status chip */}
-                        <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${
-                            failed
+                        <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${failed
                                 ? 'border-red-500/15 bg-red-500/5 text-red-400'
                                 : 'border-emerald-500/15 bg-emerald-500/5 text-emerald-400'
-                        }`}>
+                            }`}>
                             {failed
                                 ? <XCircle size={13} />
                                 : <CheckCircle2 size={13} />

@@ -1,12 +1,14 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Database, Bot, Save, CheckCircle, Shield, Key } from 'lucide-react';
+import { Settings, X, Database, Bot, Save, CheckCircle, Shield, Key, LogOut, User } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
+import { useAuthStore } from '../../store/authStore';
 import { motion } from 'framer-motion';
 
 export default function SettingsPage() {
     const { closeOverlays, addToast } = useUIStore();
+    const { user, signOut } = useAuthStore();
     const [keys, setKeys] = useState({
         geminiApiKey: '',
         supabaseUrl: '',
@@ -159,6 +161,37 @@ export default function SettingsPage() {
                         <Save size={20} /> Save Configurations
                     </button>
                 </div>
+
+                {/* Account & Sign Out */}
+                <section className="space-y-6 pt-4 border-t border-white/5">
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center">
+                            <User size={16} className="text-red-400" />
+                        </div>
+                        <h3 className="text-xs font-bold text-white uppercase tracking-[0.2em]">Account</h3>
+                    </div>
+
+                    <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl space-y-4">
+                        {user?.email && (
+                            <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 rounded-full bg-aurora/10 flex items-center justify-center">
+                                    <span className="text-sm font-bold text-aurora">{user.email[0].toUpperCase()}</span>
+                                </div>
+                                <div>
+                                    <p className="text-sm text-white font-medium">{user.email}</p>
+                                    <p className="text-[10px] text-gray-500 uppercase tracking-wider">Signed In</p>
+                                </div>
+                            </div>
+                        )}
+
+                        <button
+                            onClick={signOut}
+                            className="w-full h-12 bg-red-500/10 border border-red-500/20 text-red-400 font-semibold rounded-xl flex items-center justify-center gap-2 hover:bg-red-500/20 hover:border-red-500/30 active:scale-[0.98] transition-all text-sm"
+                        >
+                            <LogOut size={16} /> Sign Out
+                        </button>
+                    </div>
+                </section>
 
             </div>
         </motion.div>

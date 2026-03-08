@@ -1,8 +1,9 @@
 'use client';
 
 import React from 'react';
-import { Home, Bot, History, Download, Settings, User, Sparkles } from 'lucide-react';
+import { Home, Bot, History, Download, Settings, LogOut, Sparkles } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
+import { useAuthStore } from '../../store/authStore';
 import { clsx } from 'clsx';
 import { motion } from 'framer-motion';
 
@@ -15,6 +16,7 @@ export default function Siderail() {
         closeOverlays,
         setActiveView
     } = useUIStore();
+    const signOut = useAuthStore((s) => s.signOut);
 
     const navItems = [
         { id: 'home', icon: Home, label: 'Home', action: () => { setCurrentPage('home'); setActiveView('home'); } },
@@ -26,7 +28,7 @@ export default function Siderail() {
 
     const bottomItems = [
         { id: 'settings', icon: Settings, label: 'Settings', action: () => currentPage === 'settings' ? closeOverlays() : setCurrentPage('settings') },
-        { id: 'profile', icon: User, label: 'Profile', action: () => { } },
+        { id: 'signout', icon: LogOut, label: 'Sign Out', action: () => signOut() },
     ];
 
     return (
