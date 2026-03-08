@@ -35,7 +35,7 @@ import verifyAction from '../../verification/verifyAction.js';
 import { markPage, unmarkPage } from '../../tools/browser/visualGrounding.js';
 import * as AgentReasoner from './AgentReasoner.js';
 import * as LocalSelector from './LocalSelectorService.js';
-// import * as SkillMemory from './SkillMemory.js'; // DISABLED — SkillMemory commented out
+// import * as SkillMemory from './SkillMemory.js'; // DISABLED
 import bus from '../EventBus.js';
 import compactor from '../ContextCompactor.js';
 import UIFeedback from '../UIFeedback.js';
@@ -584,7 +584,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
     let replanCount = 0;
     let totalActions = 0;
     let llmCalls = 0;               // track LLM usage for monitoring
-    // SkillMemory disabled — usedSkillMemory removed
+    // SkillMemory is intentionally disabled.
 
     function setState(newState) {
         state = newState;
@@ -609,7 +609,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
             snapshot = { url: page.url(), title: '', interactiveElements: [], inputs: [], buttons: [], links: [], overlays: [] };
         }
         let screenshot = null;
-        const domain = getDomain(snapshot.url || page.url());
+        // const domain = getDomain(snapshot.url || page.url());
 
         // Initialize ContextCompactor for this task
         compactor.startTask(goal);
@@ -620,11 +620,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
         screenshot = grounded.screenshot;
         groundingMap = grounded.groundingMap;
 
-        // SkillMemory disabled — always call AgentReasoner.planSteps()
-        // const cachedSkill = await SkillMemory.recall(domain, goal);
-        // if (cachedSkill && cachedSkill.length > 0) { ... }
-
-        // Call AgentReasoner.planSteps() — the ONE LLM call for this task
+        // SkillMemory is disabled. Always generate a fresh plan via AgentReasoner.
         plan = await AgentReasoner.planSteps(goal, snapshot, screenshot);
         plan = plan.slice(0, MAX_PLAN_STEPS);
         llmCalls++;
@@ -686,9 +682,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
                 emitStep({ thought: currentStep.description || 'Task complete', action: 'DONE', result, status: 'success' });
                 executedSteps.push({ ...currentStep, result, _success: true });
                 setState(States.DONE);
-
-                // SkillMemory disabled — skill saving skipped
-                // SkillMemory.saveFromUrl(page.url(), goal, executedSteps).catch(...)
+                // SkillMemory is disabled — skill saving skipped
 
                 return { success: true, state: States.DONE, steps: executedSteps, llmCalls };
             }
@@ -1082,9 +1076,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
         if (totalActions >= MAX_TOTAL_ACTIONS) {
             emitStep({ thought: 'Reached safety action limit — stopping', action: 'MAX_ACTIONS', status: 'warn' });
         }
-
-        // SkillMemory disabled — skill saving skipped
-        // SkillMemory.saveFromUrl(page.url(), goal, executedSteps).catch(...)
+        // SkillMemory is disabled — skill saving skipped
 
         setState(States.DONE);
         return { success: true, state: States.DONE, steps: executedSteps, llmCalls };

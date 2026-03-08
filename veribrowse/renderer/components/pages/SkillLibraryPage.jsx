@@ -46,7 +46,7 @@ export default function SkillLibraryPage() {
         // Open agent panel
         openAgentPanel();
         // Start workflow with the skill's goal
-        // SkillMemory in main will automatically recall the steps for this goal
+        // Skill memory auto-recall is disabled; this runs the goal as a fresh task.
         startWorkflow(skill.goal, 'act');
     };
 

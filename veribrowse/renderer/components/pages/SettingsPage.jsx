@@ -1,88 +1,47 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Database, Bot, Save, CheckCircle, Shield, Key, User, Mail, Phone, Lock, AtSign, Calendar, MapPin, CreditCard } from 'lucide-react';
+import { Settings, X, LogOut, User, Mail, Calendar } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
+import { useAuthStore } from '../../store/authStore';
 import { motion } from 'framer-motion';
 
 export default function SettingsPage() {
     const { closeOverlays, addToast } = useUIStore();
-    const [keys, setKeys] = useState({
-        geminiApiKey: '',
-        supabaseUrl: '',
-        supabaseAnonKey: ''
-    });
-    const [profile, setProfile] = useState({
-        name: '',
-        email: '',
-        phone: '',
-        username: '',
-        password: '',
-        dob: '',
-        gender: '',
-        city: '',
-        idNumber: '',
-    });
+    const { currentUser, userProfile, userStats, signOut, loadFullUserData } = useAuthStore();
+    
+    const [isLoading, setIsLoading] = useState(false);
 
+    // Load user data on mount
     useEffect(() => {
-        if (window.electronAPI?.settings) {
-            const load = async () => {
-                const gKey = await window.electronAPI.settings.get('geminiApiKey');
-                const sUrl = await window.electronAPI.settings.get('supabaseUrl');
-                const sAKey = await window.electronAPI.settings.get('supabaseAnonKey');
-                setKeys({
-                    geminiApiKey: gKey || '',
-                    supabaseUrl: sUrl || '',
-                    supabaseAnonKey: sAKey || ''
-                });
-            };
-            load();
+        if (currentUser) {
+            loadFullUserData(currentUser.uid);
         }
-        if (window.electronAPI?.profile) {
-            window.electronAPI.profile.get().then((saved) => {
-                if (saved && typeof saved === 'object') {
-                    setProfile(p => ({ ...p, ...saved }));
-                }
-            });
+    }, [currentUser, loadFullUserData]);
+
+    const handleSignOut = async () => {
+        setIsLoading(true);
+        const result = await signOut();
+        setIsLoading(false);
+
+        if (result.success) {
+            addToast('Signed out successfully', 'success');
+            closeOverlays();
+        } else {
+            addToast(result.error || 'Failed to sign out', 'error');
         }
-    }, []);
-
-    const handleSave = () => {
-        if (!window.electronAPI?.settings) return;
-
-        // ── Validation ──────────────────────────────────────────────────────────
-        const errors = [];
-
-        if (keys.geminiApiKey && !keys.geminiApiKey.startsWith('AIza')) {
-            errors.push('Gemini API Key looks invalid — it should start with "AIza".');
-        }
-
-        if (keys.supabaseUrl && !/^https?:\/\/.+\.supabase\.co/.test(keys.supabaseUrl)) {
-            errors.push('Supabase URL should be in the form https://your-project.supabase.co');
-        }
-
-        if (keys.supabaseUrl && !keys.supabaseAnonKey) {
-            errors.push('Supabase Anon Key is required when a Supabase URL is provided.');
-        }
-
-        if (errors.length > 0) {
-            errors.forEach((msg) => addToast(msg, 'error'));
-            return;
-        }
-        // ────────────────────────────────────────────────────────────────────────
-
-        window.electronAPI.settings.set('geminiApiKey', keys.geminiApiKey);
-        window.electronAPI.settings.set('supabaseUrl', keys.supabaseUrl);
-        window.electronAPI.settings.set('supabaseAnonKey', keys.supabaseAnonKey);
-
-        if (window.electronAPI?.profile) {
-            window.electronAPI.profile.set(profile);
-        }
-
-        addToast('Settings saved successfully ✓', 'success');
-        closeOverlays();
     };
 
+    const formatDate = (dateStr) => {
+        if (!dateStr) return 'Never';
+        return new Date(dateStr).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    };
 
     return (
         <motion.div
@@ -96,7 +55,7 @@ export default function SettingsPage() {
             <header className="h-16 border-b border-white/5 flex items-center px-8 justify-between bg-white/[0.02]">
                 <div className="flex items-center gap-4">
                     <Settings className="text-gray-400" size={20} />
-                    <h2 className="text-sm font-bold text-white uppercase tracking-widest">System Configuration</h2>
+                    <h2 className="text-sm font-bold text-white uppercase tracking-widest">User Profile</h2>
                 </div>
 
                 <button
@@ -108,245 +67,83 @@ export default function SettingsPage() {
             </header>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto p-8 max-w-2xl mx-auto w-full space-y-12">
+            <div className="flex-1 overflow-y-auto p-8 max-w-3xl mx-auto w-full space-y-8">
 
-                {/* AI Profile */}
-                <section className="space-y-6">
-                    <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                            <Bot size={16} className="text-blue-500" />
-                        </div>
-                        <h3 className="text-xs font-bold text-white uppercase tracking-[0.2em]">Intelligence Profile</h3>
-                    </div>
-
-                    <div className="space-y-4 bg-white/[0.02] border border-white/5 p-6 rounded-2xl">
-                        <div className="space-y-2">
-                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">Gemini API Key</label>
-                            <div className="relative">
-                                <Key className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" size={16} />
-                                <input
-                                    type="password"
-                                    value={keys.geminiApiKey}
-                                    onChange={(e) => setKeys({ ...keys, geminiApiKey: e.target.value })}
-                                    placeholder="Paste Gemini API Key..."
-                                    className="w-full h-12 bg-black/40 border border-white/5 rounded-xl pl-10 pr-4 text-sm text-white focus:outline-none focus:border-white/20 transition-all"
-                                />
+                {/* User Profile Section */}
+                {currentUser ? (
+                    <motion.section className="space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center">
+                                <User size={16} className="text-purple-500" />
                             </div>
+                            <h3 className="text-xs font-bold text-white uppercase tracking-[0.2em]">User Profile</h3>
                         </div>
-                        <div className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/10 flex items-center gap-3">
-                            <Shield size={14} className="text-blue-500" />
-                            <p className="text-[10px] text-blue-300 opacity-60">Verified with Google Gemini 2.0 Flash</p>
-                        </div>
-                    </div>
-                </section>
 
-                {/* Database Profile */}
-                <section className="space-y-6">
-                    <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                            <Database size={16} className="text-emerald-500" />
-                        </div>
-                        <h3 className="text-xs font-bold text-white uppercase tracking-[0.2em]">Knowledge Core</h3>
-                    </div>
-
-                    <div className="space-y-4 bg-white/[0.02] border border-white/5 p-6 rounded-2xl">
-                        <div className="space-y-2">
-                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">Supabase URL</label>
-                            <input
-                                type="text"
-                                value={keys.supabaseUrl}
-                                onChange={(e) => setKeys({ ...keys, supabaseUrl: e.target.value })}
-                                placeholder="https://your-project.supabase.co"
-                                className="w-full h-12 bg-black/40 border border-white/5 rounded-xl px-4 text-sm text-white focus:outline-none focus:border-white/20 transition-all font-mono"
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">Anon Public Key</label>
-                            <input
-                                type="password"
-                                value={keys.supabaseAnonKey}
-                                onChange={(e) => setKeys({ ...keys, supabaseAnonKey: e.target.value })}
-                                placeholder="Paste Supabase Anon Key..."
-                                className="w-full h-12 bg-black/40 border border-white/5 rounded-xl px-4 text-sm text-white focus:outline-none focus:border-white/20 transition-all font-mono"
-                            />
-                        </div>
-                    </div>
-                </section>
-
-                {/* User Profile / Credentials */}
-                <section className="space-y-6">
-                    <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center">
-                            <User size={16} className="text-violet-400" />
-                        </div>
-                        <div>
-                            <h3 className="text-xs font-bold text-white uppercase tracking-[0.2em]">User Profile &amp; Credentials</h3>
-                            <p className="text-[10px] text-gray-600 mt-0.5">Saved details are injected automatically when the agent fills login or signup forms.</p>
-                        </div>
-                    </div>
-
-                    <div className="space-y-4 bg-white/[0.02] border border-white/5 p-6 rounded-2xl">
-                        <div className="grid grid-cols-2 gap-4">
-                            {/* Full Name */}
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">Full Name</label>
-                                <div className="relative">
-                                    <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" size={14} />
-                                    <input
-                                        type="text"
-                                        value={profile.name}
-                                        onChange={(e) => setProfile({ ...profile, name: e.target.value })}
-                                        placeholder="John Doe"
-                                        className="w-full h-11 bg-black/40 border border-white/5 rounded-xl pl-9 pr-3 text-sm text-white focus:outline-none focus:border-white/20 transition-all"
-                                    />
+                        <div className="space-y-4 bg-white/[0.02] border border-white/5 p-6 rounded-2xl">
+                            {/* User Info Grid */}
+                            <div className="grid grid-cols-2 gap-4 mb-6">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Display Name</label>
+                                    <p className="text-sm text-white">{currentUser.displayName || 'Not set'}</p>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                                        <Mail size={12} /> Email
+                                    </label>
+                                    <p className="text-sm text-white break-all">{currentUser.email}</p>
                                 </div>
                             </div>
 
-                            {/* Phone */}
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">Phone</label>
-                                <div className="relative">
-                                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" size={14} />
-                                    <input
-                                        type="tel"
-                                        value={profile.phone}
-                                        onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
-                                        placeholder="+1 555 000 0000"
-                                        className="w-full h-11 bg-black/40 border border-white/5 rounded-xl pl-9 pr-3 text-sm text-white focus:outline-none focus:border-white/20 transition-all"
-                                    />
+                            {/* Account Info */}
+                            {userProfile && (
+                                <div className="grid grid-cols-2 gap-4 pb-6 border-b border-white/5">
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                                            <Calendar size={12} /> Created
+                                        </label>
+                                        <p className="text-sm text-white">{formatDate(userProfile.created_at)}</p>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Last Login</label>
+                                        <p className="text-sm text-white">{formatDate(userProfile.last_login)}</p>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
+
+                            {/* Usage Stats */}
+                            {userStats && (
+                                <div className="grid grid-cols-3 gap-4 pt-6">
+                                    <div className="text-center p-4 bg-blue-500/5 rounded-lg border border-blue-500/10">
+                                        <p className="text-xs text-gray-500 uppercase tracking-widest mb-2">Sessions</p>
+                                        <p className="text-2xl font-bold text-blue-400">{userStats.totalSessions || 0}</p>
+                                    </div>
+                                    <div className="text-center p-4 bg-emerald-500/5 rounded-lg border border-emerald-500/10">
+                                        <p className="text-xs text-gray-500 uppercase tracking-widest mb-2">Workflows</p>
+                                        <p className="text-2xl font-bold text-emerald-400">{userStats.totalWorkflows || 0}</p>
+                                    </div>
+                                    <div className="text-center p-4 bg-orange-500/5 rounded-lg border border-orange-500/10">
+                                        <p className="text-xs text-gray-500 uppercase tracking-widest mb-2">Credits Used</p>
+                                        <p className="text-2xl font-bold text-orange-400">{userStats.creditsUsed || 0}</p>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
-                        {/* Email */}
-                        <div className="space-y-2">
-                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">Email</label>
-                            <div className="relative">
-                                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" size={14} />
-                                <input
-                                    type="email"
-                                    value={profile.email}
-                                    onChange={(e) => setProfile({ ...profile, email: e.target.value })}
-                                    placeholder="you@example.com"
-                                    className="w-full h-11 bg-black/40 border border-white/5 rounded-xl pl-9 pr-3 text-sm text-white focus:outline-none focus:border-white/20 transition-all"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            {/* Username */}
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">Username</label>
-                                <div className="relative">
-                                    <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" size={14} />
-                                    <input
-                                        type="text"
-                                        value={profile.username}
-                                        onChange={(e) => setProfile({ ...profile, username: e.target.value })}
-                                        placeholder="johndoe"
-                                        className="w-full h-11 bg-black/40 border border-white/5 rounded-xl pl-9 pr-3 text-sm text-white focus:outline-none focus:border-white/20 transition-all"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Password */}
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">Password</label>
-                                <div className="relative">
-                                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" size={14} />
-                                    <input
-                                        type="password"
-                                        value={profile.password}
-                                        onChange={(e) => setProfile({ ...profile, password: e.target.value })}
-                                        placeholder="••••••••"
-                                        className="w-full h-11 bg-black/40 border border-white/5 rounded-xl pl-9 pr-3 text-sm text-white focus:outline-none focus:border-white/20 transition-all"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Booking details label */}
-                        <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest pt-2">Booking Details</p>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            {/* Date of Birth */}
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">Date of Birth</label>
-                                <div className="relative">
-                                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" size={14} />
-                                    <input
-                                        type="date"
-                                        value={profile.dob}
-                                        onChange={(e) => setProfile({ ...profile, dob: e.target.value })}
-                                        className="w-full h-11 bg-black/40 border border-white/5 rounded-xl pl-9 pr-3 text-sm text-white focus:outline-none focus:border-white/20 transition-all"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Gender */}
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">Gender</label>
-                                <select
-                                    value={profile.gender}
-                                    onChange={(e) => setProfile({ ...profile, gender: e.target.value })}
-                                    className="w-full h-11 bg-black/40 border border-white/5 rounded-xl px-3 text-sm text-white focus:outline-none focus:border-white/20 transition-all appearance-none"
-                                >
-                                    <option value="">Select…</option>
-                                    <option value="Male">Male</option>
-                                    <option value="Female">Female</option>
-                                    <option value="Other">Other</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            {/* Home City */}
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">Home City</label>
-                                <div className="relative">
-                                    <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" size={14} />
-                                    <input
-                                        type="text"
-                                        value={profile.city}
-                                        onChange={(e) => setProfile({ ...profile, city: e.target.value })}
-                                        placeholder="Mumbai"
-                                        className="w-full h-11 bg-black/40 border border-white/5 rounded-xl pl-9 pr-3 text-sm text-white focus:outline-none focus:border-white/20 transition-all"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* ID Number */}
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">ID / Passport / Aadhaar</label>
-                                <div className="relative">
-                                    <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" size={14} />
-                                    <input
-                                        type="text"
-                                        value={profile.idNumber}
-                                        onChange={(e) => setProfile({ ...profile, idNumber: e.target.value })}
-                                        placeholder="Passport / Aadhaar / PAN"
-                                        className="w-full h-11 bg-black/40 border border-white/5 rounded-xl pl-9 pr-3 text-sm text-white focus:outline-none focus:border-white/20 transition-all"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="p-3 rounded-lg bg-violet-500/5 border border-violet-500/10 flex items-center gap-3">
-                            <Shield size={14} className="text-violet-400" />
-                            <p className="text-[10px] text-violet-300 opacity-60">Stored locally on your device. Never sent to any server.</p>
-                        </div>
-                    </div>
-                </section>
-
-                {/* Save Footer */}
-                <div className="pt-8">
-                    <button
-                        onClick={handleSave}
-                        className="w-full h-14 bg-white text-black font-bold rounded-2xl flex items-center justify-center gap-3 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-xl"
-                    >
-                        <Save size={20} /> Save Configurations
-                    </button>
-                </div>
+                        {/* Sign Out Button */}
+                        <button
+                            onClick={handleSignOut}
+                            disabled={isLoading}
+                            className="w-full h-12 bg-red-500/10 border border-red-500/20 text-red-400 font-semibold rounded-xl flex items-center justify-center gap-3 hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                        >
+                            <LogOut size={18} /> {isLoading ? 'Signing out...' : 'Sign Out'}
+                        </button>
+                    </motion.section>
+                ) : (
+                    <motion.section className="space-y-4 p-6 bg-blue-500/5 border border-blue-500/10 rounded-2xl text-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                        <User size={32} className="text-blue-400 mx-auto" />
+                        <p className="text-sm text-gray-300">Log in to access your profile and preferences</p>
+                    </motion.section>
+                )}
 
             </div>
         </motion.div>

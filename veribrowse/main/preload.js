@@ -121,6 +121,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
     save: (domain, goal, steps) => ipcRenderer.invoke('skills:save', { domain, goal, steps }),
   },
 
+  // ─── Authentication ───────────────────────────────────────────────────────
+  // NOTE: Firebase auth happens in renderer. These methods sync with backend.
+  auth: {
+    syncUser: (userData) =>
+      ipcRenderer.invoke('auth:sync-user', userData),
+    updateLastLogin: (data) =>
+      ipcRenderer.invoke('auth:update-last-login', data),
+    deleteAccount: (data) =>
+      ipcRenderer.invoke('auth:delete-account', data),
+  },
+
+  // ─── User Profile ────────────────────────────────────────────────────────
+  profile: {
+    getUserProfile: (uid) =>
+      ipcRenderer.invoke('profile:get-user-profile', { uid }),
+    updateUserProfile: (uid, updates) =>
+      ipcRenderer.invoke('profile:update-user-profile', { uid, updates }),
+    getUserPreferences: (uid) =>
+      ipcRenderer.invoke('profile:get-user-preferences', { uid }),
+    updateUserPreferences: (uid, preferences) =>
+      ipcRenderer.invoke('profile:update-user-preferences', { uid, preferences }),
+    getUserStats: (uid) =>
+      ipcRenderer.invoke('profile:get-user-stats', { uid }),
+    getAccountInfo: (uid) =>
+      ipcRenderer.invoke('profile:get-user-account-info', { uid }),
+    updateAvatar: (uid, avatarUrl) =>
+      ipcRenderer.invoke('profile:update-user-avatar', { uid, avatarUrl }),
+    clearProfile: (uid) =>
+      ipcRenderer.invoke('profile:clear-user-profile', { uid }),
+  },
+
 
   // ─── Event Listeners ──────────────────────────────────────────────────────
   // Generic on/off for all whitelisted channels.
