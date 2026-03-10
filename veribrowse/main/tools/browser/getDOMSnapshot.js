@@ -93,6 +93,7 @@ export default async function getDOMSnapshot(page) {
     // Helper: get visible text
     function getVisibleText() {
       var text = '';
+      if (!document || !document.body) return '';
       var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       var node;
       while ((node = walker.nextNode())) {

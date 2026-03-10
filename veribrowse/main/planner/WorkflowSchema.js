@@ -25,7 +25,7 @@ export const WORKFLOW_SCHEMA = {
                             'goBack', 'goForward', 'refresh',
                             'waitForSelector', 'fillForm',
                             'newTab', 'switchTab', 'closeTab', 'getAllTabs',
-                            'saveSkill', 'recallSkill'
+                            'saveSkill', 'recallSkill', 'generateReport', 'accessVault', 'suspend'
                         ]
                     },
                     params: { type: 'object' },
@@ -46,20 +46,22 @@ const VALID_BROWSER_TOOLS = new Set([
     'screenshot', 'vision', 'syncSession',
     'goBack', 'goForward', 'refresh',
     'waitForSelector', 'fillForm',
-    'newTab', 'switchTab', 'closeTab', 'getAllTabs',
+    'newTab', 'switchTab', 'closeTab', 'getAllTabs', 'generateReport', 'accessVault', 'suspend'
 ]);
 const VALID_MEMORY_TOOLS = new Set(['saveSkill', 'recallSkill']);
 
 // ── Required params per tool (must have at least these keys) ──
 const REQUIRED_PARAMS = {
-    navigate:        ['url'],
-    type:            ['text'],
-    fillForm:        ['fields'],
-    newTab:          ['url'],
-    switchTab:       ['tabId'],
-    closeTab:        ['tabId'],
-    saveSkill:       ['domain', 'skillName', 'goal', 'steps'],
-    recallSkill:     ['domain', 'goal'],
+    navigate: ['url'],
+    type: ['text'],
+    fillForm: ['fields'],
+    newTab: ['url'],
+    switchTab: ['tabId'],
+    closeTab: ['tabId'],
+    generateReport: ['topic', 'content'],
+    accessVault: ['key'],
+    saveSkill: ['domain', 'skillName', 'goal', 'steps'],
+    recallSkill: ['domain', 'goal'],
 };
 
 /**
@@ -75,8 +77,8 @@ export function validateWorkflow(workflow) {
         errors.push('Workflow is not an object.');
         return _result(false, errors);
     }
-    if (!workflow.id)                   errors.push('Missing workflow.id');
-    if (!workflow.goal)                 errors.push('Missing workflow.goal');
+    if (!workflow.id) errors.push('Missing workflow.id');
+    if (!workflow.goal) errors.push('Missing workflow.goal');
     if (!Array.isArray(workflow.steps)) errors.push('workflow.steps is not an array');
 
     if (errors.length) return _result(false, errors);
@@ -88,9 +90,9 @@ export function validateWorkflow(workflow) {
         const prefix = `Step[${i}]`;
 
         // ── Required fields ──
-        if (!step.id)          errors.push(`${prefix}: Missing id`);
-        if (!step.agent)       errors.push(`${prefix}: Missing agent`);
-        if (!step.tool)        errors.push(`${prefix}: Missing tool`);
+        if (!step.id) errors.push(`${prefix}: Missing id`);
+        if (!step.agent) errors.push(`${prefix}: Missing agent`);
+        if (!step.tool) errors.push(`${prefix}: Missing tool`);
         if (!step.description) errors.push(`${prefix}: Missing description`);
 
         // ── Duplicate id check ──
@@ -166,8 +168,10 @@ function _result(valid, errors) {
 export function getToolDefinitions() {
     return `
 - navigate(url): Navigates to a URL. Always use https://.
-- click(selector, text): Clicks an element by CSS selector or visible inner text.
-- type(selector, text, pressEnter): Types text into an input field. Set pressEnter:true to submit.
+- click(selector, text): Clicks an element by CSS selector or visible inner text. For complex dropdowns or date pickers, if a click fails to open it, try using the type tool or fillForm directly on the input.
+- type(selector, text, pressEnter): Types text into an input field. Set pressEnter:true to submit. Useful for date fields (e.g., "YYYY-MM-DD") when calendar UI is too complex.
+- accessVault(key): Retrieves encrypted personal data (e.g. "Full Name", "Home Address", "Password") from the user's secure vault. Use this BEFORE a 'type' action if you need personal info you don't have.
+- suspend(reason): Pauses execution and requests human intervention. Use this for CAPTCHAs, 2FA, or when you are stuck and need the user to make a manual decision in the browser.
 - scroll(direction, amount): direction is 'up', 'down', 'top', or 'bottom'.
 - extract(includeLinks): Scrapes visible text and links from the current page.
 - screenshot(): Captures the current page as a base64 string.
@@ -177,11 +181,12 @@ export function getToolDefinitions() {
 - goForward(): Steps the browser history forward one page.
 - refresh(): Reloads the current page.
 - waitForSelector(selector, text, timeout, state): Wait for a CSS selector or text to appear before proceeding. Use after navigate for dynamic pages.
-- fillForm(formSelector, fields, submit, submitSelector): Fill multiple form fields in one step. fields is [{selector, value}].
+- fillForm(formSelector, fields, submit, submitSelector): Fill multiple form fields. fields is [{selector, value}]. If a date picker intercepts clicks, use this to force set the value directly.
 - newTab(url, type): type is 'user' (visible) or 'shadow' (background research).
 - switchTab(tabId): Changes the active user tab.
 - closeTab(tabId): Closes a tab.
 - getAllTabs(): Returns metadata for all open tabs.
+- generateReport(topic, content): Generates a markdown document summarizing research or findings based on the provided content.
 - saveSkill(domain, skillName, goal, steps): Persists a successful workflow for future reuse.
 - recallSkill(domain, goal): Finds a matching previously saved workflow.
   `.trim();

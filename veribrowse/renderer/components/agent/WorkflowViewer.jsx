@@ -78,11 +78,18 @@ export default function WorkflowViewer() {
                         className="flex flex-col gap-2 mt-1 px-1"
                     >
                         {/* Status chip */}
+<<<<<<< Updated upstream
                         <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${
                             failed
                                 ? 'border-red-500/15 bg-red-500/5 text-red-400'
                                 : 'border-emerald-500/15 bg-emerald-500/5 text-emerald-400'
                         }`}>
+=======
+                        <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${failed
+                            ? 'border-red-500/15 bg-red-500/5 text-red-400'
+                            : 'border-emerald-500/15 bg-emerald-500/5 text-emerald-400'
+                            }`}>
+>>>>>>> Stashed changes
                             {failed
                                 ? <XCircle size={13} />
                                 : <CheckCircle2 size={13} />
@@ -96,7 +103,7 @@ export default function WorkflowViewer() {
                         </div>
 
                         {/* Save skill */}
-                        {!failed && (
+                        {/* !failed && (
                             <motion.button
                                 initial={{ opacity: 0 }}
                                 animate={{ opacity: 1 }}
@@ -114,7 +121,7 @@ export default function WorkflowViewer() {
                                 <BookmarkPlus size={12} />
                                 Save as Skill
                             </motion.button>
-                        )}
+                        ) */}
                     </motion.div>
                 )}
             </AnimatePresence>

@@ -23,6 +23,7 @@ import * as CreditGuard from './core/CreditGuard.js';
 import * as SupabaseService from './services/SupabaseService.js';
 import * as SessionService from './services/SessionService.js';
 import browserManager from './core/BrowserManager.js';
+import VaultService from './services/VaultService.js';
 
 // Agents & Engine (Import for initialization)
 import './core/WorkflowEngine.js';
@@ -128,6 +129,7 @@ async function createWindow() {
   bridge('agent:execution-step');  // autonomous loop live step updates
   bridge('agent:autonomous-done');
   bridge('agent:state-change');    // AutonomousLoop state machine transitions
+  bridge('agent:needs-human', 'workflow:paused'); // HITL trigger
   bridge('credit:updated');
   bridge('credit:warning');
   bridge('credit:critical');
@@ -136,6 +138,34 @@ async function createWindow() {
   bridge('browser:user-tab-switched');
   bridge('browser:user-tab-closed');
   bridge('browser:shadow-tab-created');
+
+  // Vault Management IPCs
+  ipcMain.handle('agent:vault-list', () => {
+    return VaultService.listKeys();
+  });
+
+  ipcMain.handle('agent:vault-get', (event, key) => {
+    return VaultService.get(key);
+  });
+
+  ipcMain.handle('agent:vault-set', (event, { key, value }) => {
+    VaultService.set(key, value);
+    return { success: true };
+  });
+
+  ipcMain.handle('agent:vault-delete', (event, key) => {
+    VaultService.delete(key);
+    return { success: true };
+  });
+
+  // Handle Permissions for Web Speech API (Microphone)
+  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media') {
+      callback(true);
+    } else {
+      callback(false);
+    }
+  });
 
 
   // Load UI first

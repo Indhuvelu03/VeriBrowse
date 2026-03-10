@@ -32,6 +32,31 @@ export function registerServiceHandlers() {
         return await SupabaseService.getChatHistory(sessionId).catch(() => []);
     });
 
+    // --- AUTHENTICATION ---
+    ipcMain.handle('auth:get-state', async () => {
+        return await SupabaseService.getAuthState().catch(() => null);
+    });
+
+    ipcMain.handle('auth:sign-in', async (event, { email, password }) => {
+        try {
+            return { user: await SupabaseService.signIn(email, password), error: null };
+        } catch (e) {
+            return { user: null, error: e.message };
+        }
+    });
+
+    ipcMain.handle('auth:sign-up', async (event, { email, password }) => {
+        try {
+            return { user: await SupabaseService.signUp(email, password), error: null };
+        } catch (e) {
+            return { user: null, error: e.message };
+        }
+    });
+
+    ipcMain.handle('auth:sign-out', async () => {
+        await SupabaseService.signOut().catch(() => { });
+    });
+
     // --- AGENT SKILLS ---
     ipcMain.handle('skills:get-all', async () => {
         return await SupabaseService.getAllSkills().catch(() => []);

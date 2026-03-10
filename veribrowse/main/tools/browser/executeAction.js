@@ -11,11 +11,15 @@
  * consistently WITHOUT changing AutonomousLoop's calling contract.
  *
  * Interface is unchanged: executeAction(action, page)
- * ZERO LLM calls.
+ * ZERO LLM
  */
 
 import InteractionEngine from '../../interaction/interactionEngine.js';
 import extract from './extract.js';
+// Additional Actions
+import * as screenshotAction from './screenshot.js';
+import * as syncSessionAction from './syncSession.js';
+import * as generateReportAction from './generateReport.js';
 
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1) + min);
 
@@ -25,11 +29,11 @@ export default async function executeAction(action, page) {
         // ── CLICK ──────────────────────────────────────────────────────
         case 'CLICK': {
             const result = await InteractionEngine.execute(page, {
-                type:     'click',
+                type: 'click',
                 selector: action.selector || null,
-                text:     action.text     || null,
+                text: action.text || null,
                 // Treat clicks with no selector as less predictable → not fast
-                fast:     !!action.selector,
+                fast: !!action.selector,
                 // Important clicks (destructive, confirmation): any button with
                 // submit / apply / buy / continue semantics
                 important: /submit|apply|confirm|buy|checkout|continue|accept/i
@@ -39,14 +43,28 @@ export default async function executeAction(action, page) {
             if (!result.success) {
                 throw new Error(result.error || `CLICK failed — selector: "${action.selector}", text: "${action.text}"`);
             }
+<<<<<<< Updated upstream
             // Navigation wait is handled inside humanClickElement (smart race).
             // No second waitForLoadState here — that was an 8s penalty on every click.
+=======
+
+            // Wait for potential navigation after click
+            await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => { });
+
+            // Auth submits often redirect asynchronously after XHR; give them extra settle time.
+            const clickIntent = `${action.text || ''} ${action.reasoning || ''} ${action.goalText || ''} ${action.selector || ''}`;
+            if (/\b(log\s*in|login|sign\s*in|signin|submit)\b/i.test(clickIntent)) {
+                await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => { });
+                await page.waitForTimeout(rand(900, 1600));
+            }
+>>>>>>> Stashed changes
             break;
         }
 
         // ── TYPE ───────────────────────────────────────────────────────
         case 'TYPE': {
             const result = await InteractionEngine.execute(page, {
+<<<<<<< Updated upstream
                 type:        'type',
                 selector:    action.selector || null,
                 text:        action.text || '',
@@ -54,6 +72,16 @@ export default async function executeAction(action, page) {
                 pressEnter:  action.pressEnter || action.text?.endsWith('\n') || false,
                 waitAfter:   rand(800, 1600),
                 moveCursor:  true,
+=======
+                type: 'type',
+                selector: action.selector || null,
+                text: action.text || '',
+                fieldHint: action.fieldHint || action.goalText || action.reasoning || null,
+                clear: true,
+                pressEnter: action.pressEnter || action.text?.endsWith('\n') || false,
+                waitAfter: rand(800, 1600),
+                moveCursor: true,
+>>>>>>> Stashed changes
             });
 
             if (!result.success) {
@@ -66,19 +94,19 @@ export default async function executeAction(action, page) {
         case 'SCROLL': {
             // Map AutonomousLoop's scroll descriptor to InteractionEngine
             let amount = action.amount || 'screen';
-            let dir    = action.direction || 'down';
+            let dir = action.direction || 'down';
 
             // Handle special string directions from planner
-            if (dir === 'top')    { amount = 'top';    dir = 'up'; }
-            if (dir === 'bottom') { amount = 'full';   dir = 'down'; }
+            if (dir === 'top') { amount = 'top'; dir = 'up'; }
+            if (dir === 'bottom') { amount = 'full'; dir = 'down'; }
 
             await InteractionEngine.execute(page, {
-                type:      'scroll',
+                type: 'scroll',
                 direction: dir,
                 amount,
-                selector:  action.selector || null,
+                selector: action.selector || null,
                 // Use 'read' profile if agent is explicitly reading / extracting
-                profile:   action.profile || 'skim',
+                profile: action.profile || 'skim',
             });
             break;
         }
@@ -87,7 +115,7 @@ export default async function executeAction(action, page) {
         case 'NAVIGATE': {
             await InteractionEngine.execute(page, {
                 type: 'navigate',
-                url:  action.url,
+                url: action.url,
             });
             break;
         }
@@ -95,6 +123,7 @@ export default async function executeAction(action, page) {
         // ── PRESS_ENTER (convenience wrapper) ─────────────────────────
         case 'PRESS_ENTER': {
             await page.keyboard.press('Enter');
+<<<<<<< Updated upstream
             // ENHANCED: Better handling for SPA navigation
             // SPAs (React, Angular, Vue) don't trigger waitForNavigation — they update content dynamically.
             // Use a combination approach:
@@ -122,17 +151,36 @@ export default async function executeAction(action, page) {
             } else {
                 await page.waitForTimeout(rand(300, 700)); // Page load settle
             }
+=======
+            await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => { });
+            await page.waitForTimeout(rand(500, 1000));
+>>>>>>> Stashed changes
             break;
         }
 
         // ── WAIT ───────────────────────────────────────────────────────
         case 'WAIT': {
             await InteractionEngine.execute(page, {
-                type:   'wait',
+                type: 'wait',
                 amount: action.amount || rand(1200, 2500),
             });
             break;
         }
+
+        case 'syncSession':
+            return await syncSessionAction.execute(page);
+
+        case 'generateReport':
+            // The existing GENERATE_REPORT case already handles this.
+            // This new case seems to be for a different contract or a refactor.
+            // Assuming `action` contains the necessary parameters for `generateReportAction.execute`.
+            // If `params` is intended, it needs to be passed into `executeAction` or derived from `action`.
+            // For now, mapping `action` to `params` as best as possible.
+            return await generateReportAction.execute(page, {
+                topic: action.topic,
+                content: action.content,
+                filePath: action.filePath, // Assuming filePath might be a parameter
+            });
 
         // ── EXTRACT ────────────────────────────────────────────────────
         // Capture page text so AutonomousLoop can surface it as the step result
@@ -150,6 +198,7 @@ export default async function executeAction(action, page) {
             break;
         }
 
+<<<<<<< Updated upstream
         // ── SELECT ─────────────────────────────────────────────────────
         // Handles native HTML <select> dropdowns (passenger count, class, etc.)
         case 'SELECT': {
@@ -166,6 +215,44 @@ export default async function executeAction(action, page) {
                 throw new Error(`SELECT failed — could not select "${value}" in "${selector}"`);
             }
             await page.waitForTimeout(rand(400, 800));
+=======
+        // ── SUSPEND (HITL) ─────────────────────────────────────────────
+        case 'suspend': {
+            const reason = action.reason || action.description || 'Agent needs your help to continue.';
+            console.log(`[executeAction:suspend] Pausing for HITL: ${reason}`);
+            // Emit via EventBus so the renderer shows the HITL card
+            const bus = (await import('../../core/EventBus.js')).default;
+            bus.emit('agent:needs-human', { reason });
+            action.result = `Paused: ${reason}`;
+            // AutonomousLoop's waitForResume will block until user clicks Resume
+            break;
+        }
+
+        // ── ACCESS_VAULT ───────────────────────────────────────────────
+        case 'accessVault': {
+            const VaultService = (await import('../../services/VaultService.js')).default;
+            const val = VaultService.get(action.key);
+            if (val) {
+                action.result = val;
+            } else {
+                throw new Error(`Vault entry for "${action.key}" not found.`);
+            }
+            break;
+        }
+
+        // ── GENERATE_REPORT ────────────────────────────────────────────
+        case 'generateReport': {
+            try {
+                const { execute: runReport } = await import('./generateReport.js');
+                const reportResult = await runReport(page, {
+                    topic: action.topic || action.params?.topic || 'Report',
+                    content: action.content || action.params?.content || '',
+                });
+                action.result = reportResult?.result || 'Report generated.';
+            } catch (e) {
+                throw new Error(`[executeAction:generateReport] Failed: ${e.message}`);
+            }
+>>>>>>> Stashed changes
             break;
         }
 

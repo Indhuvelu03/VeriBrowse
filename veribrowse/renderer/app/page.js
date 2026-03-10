@@ -8,6 +8,7 @@ import useIPCListeners from '../hooks/useIPCListeners';
 // Shell Components
 import WindowControls from '../components/shell/WindowControls';
 import Siderail from '../components/shell/Siderail';
+import DownloadsTray from '../components/shell/DownloadsTray';
 
 // Browser Components
 import Topbar from '../components/browser/Topbar';
@@ -26,10 +27,15 @@ import HistoryPage from '../components/pages/HistoryPage';
 import DownloadsPage from '../components/pages/DownloadsPage';
 import SettingsPage from '../components/pages/SettingsPage';
 import SkillLibraryPage from '../components/pages/SkillLibraryPage';
+import VaultPage from '../components/pages/VaultPage';
 
 // Utilities
 import ToastNotifications from '../components/ToastNotifications';
 import { AnimatePresence, motion } from 'framer-motion';
+<<<<<<< Updated upstream
+=======
+import { clsx } from 'clsx';
+>>>>>>> Stashed changes
 
 export default function MainLayout() {
     const { currentPage, agentPanelOpen, activeView } = useUIStore();
@@ -64,6 +70,7 @@ export default function MainLayout() {
 
                 {/* Shared Viewport Area */}
                 <div className="flex-1 relative flex overflow-hidden">
+<<<<<<< Updated upstream
                     {/* Browser Viewport — native view, handles its own sizing */}
                     <div className="absolute inset-0 z-0">
                         <ErrorBoundary name="BrowserLayer">
@@ -105,6 +112,45 @@ export default function MainLayout() {
 
                     {/* Agent Panel — AnimatePresence fully unmounts when closed so
                             the native BrowserView never has a partial-panel overlap */}
+=======
+                    {/* Main Content Area — BrowserLayer handles native view offset internally */}
+                    <div className="absolute inset-0 z-0">
+                        {/* The Page Layer */}
+                        <AnimatePresence mode="wait">
+                            {(activeView === 'home' || !activeTabId) && (
+                                <motion.div
+                                    key="home-page"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    className={clsx(
+                                        "absolute inset-y-0 left-0 z-10 transition-all duration-300",
+                                        agentPanelOpen ? "right-[420px]" : "right-0"
+                                    )}
+                                >
+                                    <HomePage />
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+
+                        {/* The Browser Viewport */}
+                        <ErrorBoundary name="BrowserLayer">
+                            <BrowserLayer />
+                        </ErrorBoundary>
+
+                        {/* Overlays */}
+                        <AnimatePresence>
+                            {currentPage === 'history' && <HistoryPage key="history" />}
+                            {currentPage === 'downloads' && <DownloadsPage key="downloads" />}
+                            {currentPage === 'settings' && <SettingsPage key="settings" />}
+                            {currentPage === 'skills' && <SkillLibraryPage key="skills" />}
+                            {currentPage === 'vault' && <VaultPage key="vault" />}
+                        </AnimatePresence>
+                    </div>
+
+                    {/* 3. Agent Panel — AnimatePresence fully unmounts when closed so
+                                    the native BrowserView never has a partial-panel overlap */}
+>>>>>>> Stashed changes
                     <AnimatePresence>
                         {agentPanelOpen && (
                             <motion.div
@@ -126,6 +172,10 @@ export default function MainLayout() {
 
             {/* 5. Utility Layers */}
             <ToastNotifications />
+<<<<<<< Updated upstream
+=======
+            <DownloadsTray />
+>>>>>>> Stashed changes
 
         </div>
     );

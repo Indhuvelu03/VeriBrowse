@@ -45,19 +45,13 @@ const CURSOR_INJECT_SCRIPT = `
     var el = document.createElement('div');
     el.id = '__vb_cursor__';
 
-    // ── Cursor arrow shape using border-trick (no images) ──
+    // ── Laser Cursor (Glowing Red Dot) ──
     el.style.cssText = [
         'position: fixed',
         'top: 0',
         'left: 0',
         'width: 0',
         'height: 0',
-        // Arrow pointing top-left using borders
-        'border-style: solid',
-        'border-width: 0 9px 15px 0',  // top right bottom left
-        'border-color: transparent rgba(20,20,20,0.75) transparent transparent',
-        // Outer white shadow gives contrast on any background
-        'filter: drop-shadow(0 0 1.5px rgba(255,255,255,0.9)) drop-shadow(0 1px 3px rgba(0,0,0,0.7))',
         'pointer-events: none',
         'z-index: 2147483647',
         'transform: translate(0px, 0px)',
@@ -72,13 +66,13 @@ const CURSOR_INJECT_SCRIPT = `
     dot.id = '__vb_cursor_dot__';
     dot.style.cssText = [
         'position: absolute',
-        'top: 1px',
-        'left: 0px',
-        'width: 4px',
-        'height: 4px',
+        'top: -3px',
+        'left: -3px',
+        'width: 6px',
+        'height: 6px',
         'border-radius: 50%',
-        'background: white',
-        'box-shadow: 0 0 2px rgba(0,0,0,0.8)',
+        'background: #ff0000',
+        'box-shadow: 0 0 8px rgba(255,0,0,0.9), 0 0 16px rgba(255,0,0,0.5)',
         'pointer-events: none',
     ].join('; ');
 
@@ -139,6 +133,7 @@ const CLICK_FEEDBACK_SCRIPT = `
 `;
 
 /**
+<<<<<<< Updated upstream
  * Script to set the cursor transition duration before a movement begins.
  * Called once per moveCursorTo() instead of updating position per-step.
  */
@@ -147,10 +142,50 @@ function buildTransitionScript(durationMs) {
 (function () {
     var el = document.getElementById('__vb_cursor__');
     if (el) el.style.transition = 'transform ' + ${durationMs} + 'ms linear';
+=======
+ * Show a bounding box around the target element.
+ */
+function buildBoundingBoxScript(x, y, width, height) {
+    return `
+(function () {
+    var id = '__vb_cursor_bbox__';
+    var el = document.getElementById(id);
+    if (!el) {
+        el = document.createElement('div');
+        el.id = id;
+        document.body.appendChild(el);
+    }
+    el.style.cssText = [
+        'position: fixed',
+        'top: ' + ${y} + 'px',
+        'left: ' + ${x} + 'px',
+        'width: ' + ${width} + 'px',
+        'height: ' + ${height} + 'px',
+        'border: 2px solid #ff0000',
+        'background: rgba(255, 0, 0, 0.1)',
+        'box-shadow: 0 0 10px rgba(255,0,0,0.5)',
+        'pointer-events: none',
+        'z-index: 2147483646',
+        'transition: all 150ms ease-out',
+    ].join('; ');
+>>>>>>> Stashed changes
 })();
 `;
 }
 
+<<<<<<< Updated upstream
+=======
+/**
+ * Hide the bounding box.
+ */
+const HIDE_BBOX_SCRIPT = `
+(function () {
+    var el = document.getElementById('__vb_cursor_bbox__');
+    if (el) el.style.opacity = '0';
+})();
+`;
+
+>>>>>>> Stashed changes
 // ─── Public API ──────────────────────────────────────────────────────────
 
 /**
@@ -220,6 +255,30 @@ export async function showClickFeedback(page) {
     } catch {
         // Silent
     }
+}
+
+/**
+ * Show a bounding box overlay on the page.
+ * @param {import('playwright').Page} page
+ * @param {number} x
+ * @param {number} y
+ * @param {number} width
+ * @param {number} height
+ */
+export async function showBoundingBox(page, x, y, width, height) {
+    try {
+        await page.evaluate(buildBoundingBoxScript(x, y, width, height));
+    } catch { } // Silent
+}
+
+/**
+ * Hide the bounding box overlay.
+ * @param {import('playwright').Page} page
+ */
+export async function hideBoundingBox(page) {
+    try {
+        await page.evaluate(HIDE_BBOX_SCRIPT);
+    } catch { } // Silent
 }
 
 /**

@@ -17,13 +17,19 @@
  */
 
 import autonomousLoop, { States } from './AutonomousLoop.js';
-import * as SkillMemory from './SkillMemory.js';
+// import * as SkillMemory from './SkillMemory.js'; // Disabled per user request
 import * as LocalSelector from './LocalSelectorService.js';
 import bus from '../EventBus.js';
 import UIFeedback from '../UIFeedback.js';
 import compactor from '../ContextCompactor.js';
 import * as CreditGuard from '../CreditGuard.js';
+<<<<<<< Updated upstream
 import { DEEP_SUMMARY_PROMPT, COMPLETION_SUMMARY_PROMPT } from '../../constants.js';
+=======
+import { startLivePreview } from '../LivePreview.js';
+import { DEEP_SUMMARY_PROMPT } from '../../constants.js';
+import { saveTaskState } from '../../services/SupabaseService.js';
+>>>>>>> Stashed changes
 
 // ─── Runtime State ──────────────────────────────────────────────────────
 let currentAbort = null;    // AbortController for the active task
@@ -60,6 +66,10 @@ export async function start(page, goal, options = {}) {
 
     emitStatus('Starting autonomous agent…', 'executing');
     console.log(`[AgentRuntime] Starting task: "${goal}"`);
+
+    // Generate a unique task ID (using timestamp + random string) and save initial state
+    const taskId = `task_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    await saveTaskState(taskId, goal, 'running');
 
     try {
         const result = await autonomousLoop(page, goal, {
@@ -239,6 +249,9 @@ export async function start(page, goal, options = {}) {
             },
         });
 
+        // Mark task complete in Supabase
+        await saveTaskState(taskId, goal, result.success ? 'completed' : 'aborted');
+
         return {
             success: result.success,
             result: {
@@ -253,6 +266,11 @@ export async function start(page, goal, options = {}) {
         emitStatus('Ready', 'idle');
         currentState = States.ABORTED;
         bus.emit('agent:error', { error: err.message });
+
+        // Ensure taskId is defined if error thrown outside of try block (fallback to a new ID if it threw early)
+        const errTaskId = typeof taskId !== 'undefined' ? taskId : `task_${Date.now()}_err`;
+        await saveTaskState(errTaskId, (typeof goal !== 'undefined' ? goal : 'unknown'), 'failed');
+
         return { success: false, result: { error: err.message } };
     } finally {
         currentAbort = null;
@@ -290,7 +308,7 @@ export function getStats() {
     return {
         ...runStats,
         selectorCacheStats: LocalSelector.getStats(),
-        skillMemoryStats: SkillMemory.getStats(),
+        // skillMemoryStats: SkillMemory.getStats(), // Disabled per user request
         contextCompactorStats: compactor.getStats(),
         currentState,
         currentGoal,

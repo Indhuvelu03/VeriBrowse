@@ -149,6 +149,10 @@ export function registerBrowserHandlers() {
         return await SupabaseService.getDownloads();
     });
 
+    ipcMain.handle('browser:delete-download', async (event, id) => {
+        return await SupabaseService.deleteDownload(id);
+    });
+
     ipcMain.on('browser:show-item', (event, filePath) => {
         shell.showItemInFolder(filePath);
     });

@@ -1,0 +1,75 @@
+# VeriBrowse Feature Implementation Walkthrough
+
+## Summary of Changes
+All tasks outlined in the implementation plan have been successfully implemented. The following details the changes and how to verify them.
+
+## 1. Supabase Authentication
+*   **What was done:** 
+    *   Added `signIn`, `signUp`, and `signOut` wrappers in `main/services/SupabaseService.js`.
+    *   Exposed these methods via `ipcMain` in `ServiceHandlers.js` and securely to the renderer in `preload.js`.
+    *   Created an entirely new "Auth Profile" section in `SettingsPage.jsx` that handles signing in/up and visually displays the current authenticated user's email.
+*   **How to test:** 
+    1.  Click the Settings icon.
+    2.  Ensure you have added your Supabase URL and Anon Key in the database section.
+    3.  Under the new "Auth Profile" section, enter an email and password and click "Sign Up" or "Log In".
+    4.  Verify that toast notifications appear for success/failure and that your user email displays once logged in. You can also test clicking "Sign Out".
+
+## 2. Home Page Resize
+*   **What was done:** 
+    *   Updated the `renderer/app/page.js` component to add dynamic styling to the `HomePage` container. When the agent panel is open, the HomePage content area now correctly shrinks by `420px` to the left.
+    *   Constrained the absolute ambient glow backgrounds in `HomePage.jsx` to absolute pixel sizes to prevent them from breaking the rendering area during resizing.
+*   **How to test:** 
+    1.  Open the application to the default Home Screen.
+    2.  Open and close the right-side Chat/Agent panel. 
+    3.  Verify that the VeriBrowse logo and search pill constraints smoothly slide and resize instead of being covered up or breaking.
+
+## 3. User Profile in Settings
+*   **What was done:** 
+    *   *Addressed concurrently with Step 1.* The `SettingsPage.jsx` now listens to the current auth state and visually displays the logged-in user profile. 
+
+## 4. Disabling Skill Memory
+*   **What was done:** 
+    *   Modified `saveSkill`, `recallSkill`, `getAllSkills`, and `deleteSkill` in `SupabaseService.js` to return early or dummy data.
+    *   Added standard `console.warn` statements indicating that the Skill Memory feature is currently disabled. 
+*   **How to test:** 
+    *   This is mostly an under-the-hood change. You can verify that the "Skills" tab in the UI (if accessible) is empty and that new repetitive tasks do not trigger memory saving logic in the console logs.
+
+## 5. Download History and Context Menu
+*   **What was done:** 
+    *   **Context Menu**: Added a `view.webContents.on('context-menu')` event listener inside `BrowserManager.js` during the creation of a `WebContentsView`. This native menu gives options to copy text, save images, copy image URLs, go back/forward, and refresh.
+    *   **Downloader**: Added a `session.on('will-download')` handler. When downloads complete, it captures metadata (filename, URL, path, size, type) and saves it to Supabase via `SupabaseService.addDownload`.
+*   **How to test:** 
+    1.  In act/auto mode, navigate to any webpage with images (e.g., Google Images).
+    2.  Right-click an image in the native browser view to see the native context menu.
+    3.  Click "Save Image As..." 
+    4.  Once the download finishes, check your Supabase `downloads` table to verify the history record was stored.
+
+## 6. Add Voice Input
+*   **What was done:** 
+    *   Integrated the native `window.webkitSpeechRecognition` API into `ChatInput.jsx`.
+    *   Added a pulsing microphone button inside the chat box that toggles voice dictation on and off.
+*   **How to test:** 
+    1.  Open the chat agent.
+    2.  Click the microphone icon inside the text field. 
+    3.  Speak into the microphone. You should see your speech transcribed into the text box in real-time.
+    4.  Click the icon again to stop listening.
+
+## 7. Intent Detection UI State Sync
+*   **What was done:** 
+    *   Found the intent categorization inside the LLM prompt block in `WorkflowEngine.js`. 
+    *   Added an IPC emission hook: `bus.emit('agent:intent-classified', { intent })`.
+    *   Updated `ChatInput.jsx` to listen for this event and visually `setMode()` to the selected matching intent type so that users see what the agent actually decided to do under the hood. 
+*   **How to test:** 
+    1.  Have the Chat Input in `Auto` mode. 
+    2.  Type an explicit research task, e.g., "Deep dive: find the best laptops under 400".
+    3.  Watch the UI mode pills. Once the intent dispatcher classifies the request as long-horizon research, the pill will automatically jump to `Deep` or `Act`.
+
+## 8. Document Generation
+*   **What was done:** 
+    *   Created `generateReport.js` as an executable browser tool action that invokes `CreditGuard.generate` to format incoming LLM tokens into structured markdown and save it to your standard Windows Downloads folder.
+    *   Hooked it up directly to the `executeAction.js` switch statement map.
+    *   Added the `generateReport` definition with parameters `(topic, content)` in `WorkflowSchema.js`.
+*   **How to test:** 
+    1.  Give the agent a complex command explicitly asking for a document: "Browse the web for the latest news on AI and generate a report on it."
+    2.  Verify in the planner trace that `generateReport` tool is successfully queued. 
+    3.  Check your Downloads folder for the `VeriBrowse_Report_*.md` file.

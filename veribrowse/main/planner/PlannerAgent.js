@@ -24,7 +24,9 @@ Rules:
 5. Prefer agent "browser" for most tasks. Use agent "memory" only for saveSkill / recallSkill.
 6. Use "isShadowTab: true" for repetitive background research tasks.
 7. Use "extract" to read page content before resorting to "vision".
-8. If the task involves multiple steps on a site, include a "saveSkill" step at the end.
+8. If the task involves researching multiple topics or comparing sources, use "newTab" to open them concurrently, and "switchTab" to flip between them.
+9. If explicitly asked to create a report or document, aggregate your findings and use the "generateReport" tool as the final step.
+10. If the task involves multiple steps on a site, include a "saveSkill" step at the end.
 
 Example output shape:
 {

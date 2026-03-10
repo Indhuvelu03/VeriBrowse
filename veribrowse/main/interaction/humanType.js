@@ -25,7 +25,8 @@
  */
 
 import { randInt, randomDelay, charDelay, hesitation, actionCooldown } from './humanTiming.js';
-import { humanClickElement } from './humanClick.js';
+import { humanClickElement, resolveElementCenter } from './humanClick.js';
+import { showBoundingBox, hideBoundingBox } from './cursorManager.js';
 
 // ─── Triangular distribution helper ──────────────────────────────────────
 // More realistic than uniform — peaks in the middle, tapers at extremes.
@@ -128,7 +129,18 @@ export async function humanType(page, selector, text, options = {}) {
             if (moveCursor) {
                 // Move cursor to the field (visual) — uses humanClick internals
                 const res = await humanClickElement(page, sel, null, { fast: true });
+<<<<<<< Updated upstream
                 clickSucceeded = res.success;
+=======
+                if (res.success) {
+                    focused = true;
+                    usedSelector = sel;
+                    // Visual feedback: show bounding box while typing
+                    const { box } = await resolveElementCenter(page, sel);
+                    if (box) await showBoundingBox(page, box.x, box.y, box.width, box.height);
+                    break;
+                }
+>>>>>>> Stashed changes
             } else {
                 try {
                     await page.click(sel, { timeout: 3000 });
@@ -281,6 +293,11 @@ export async function humanType(page, selector, text, options = {}) {
         // Wait for potential navigation or AJAX response
         await page.waitForLoadState('domcontentloaded', { timeout: 12000 }).catch(() => { });
         await randomDelay(waitAfterEnter * 0.6, waitAfterEnter);
+    }
+
+    // ── 6. Cleanup visual feedback ──
+    if (moveCursor) {
+        await hideBoundingBox(page);
     }
 
     return { success: true, usedSelector };

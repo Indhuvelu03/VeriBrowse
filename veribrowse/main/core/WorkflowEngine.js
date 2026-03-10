@@ -8,6 +8,7 @@ import * as AgentRuntime from './agent/AgentRuntime.js';
 import UIFeedback from './UIFeedback.js';
 import browserManager from './BrowserManager.js';
 import { REFINE_PROMPT } from '../constants.js';
+import { research as runResearch } from '../agents/ResearchOrchestrator.js';
 
 /**
  * WorkflowEngine
@@ -101,6 +102,14 @@ class WorkflowEngine {
 
             const { intent_type, confidence_score, reasoning_summary } = classification;
             console.log(`[WorkflowEngine] Intent: ${intent_type} (${confidence_score}) — ${reasoning_summary}`);
+
+            // Emit intent to UI
+            let mappedIntent = 'auto';
+            if (intent_type === Intents.CHAT) mappedIntent = 'think';
+            else if (intent_type === Intents.QUICK_ACTION) mappedIntent = 'act';
+            else if (intent_type === Intents.LONG_HORIZON) mappedIntent = 'deep';
+
+            bus.emit('agent:intent-classified', { intent: mappedIntent });
 
             // ── DEEP mode: browse + LLM summarize ──
             if (mode === 'deep') {
@@ -259,12 +268,39 @@ class WorkflowEngine {
 
     /**
      * DEEP mode: Browse + Summarize.
-     * Runs the full autonomous loop then runs one LLM pass over all collected
-     * page data to produce a structured, readable answer in the chat panel.
+     * For research tasks (compare, find best, research topic), uses multi-tab
+     * ResearchOrchestrator. For other tasks, falls back to single-tab autonomous loop.
      * Best for: "find the best X", "compare Y and Z", "research topic T".
      */
     async _handleDeep(goal, classification) {
+<<<<<<< Updated upstream
         const page = await this._getPageForTask();
+=======
+        UIFeedback.emit('PLANNING');
+
+        // Detect if this looks like a research/comparison task
+        const researchKeywords = ['research', 'compare', 'find the best', 'find the cheapest', 'summarize', 'analyze', 'report on', 'gather information', 'review', 'investigate'];
+        const isResearch = researchKeywords.some(kw => goal.toLowerCase().includes(kw));
+
+        if (isResearch) {
+            console.log('[WorkflowEngine] Routing to multi-tab ResearchOrchestrator');
+            try {
+                const result = await runResearch(goal, { generateDoc: true });
+                if (!result.success) {
+                    bus.emit('agent:error', { error: 'Research task failed — no sources could be extracted.' });
+                }
+                bus.emit('agent:autonomous-done', { result: { success: result.success, state: 'DONE' } });
+            } catch (err) {
+                console.error('[WorkflowEngine] Research orchestrator failed:', err.message);
+                bus.emit('agent:error', { error: err.message });
+                UIFeedback.emit('FAILED', err.message);
+            }
+            return;
+        }
+
+        // Non-research deep tasks: use single-tab autonomous loop with summary
+        const page = browserManager.getActivePage();
+>>>>>>> Stashed changes
         if (!page) {
             bus.emit('agent:error', { error: 'No browser tab available. Open a tab first.' });
             UIFeedback.emit('FAILED', 'No browser tab');

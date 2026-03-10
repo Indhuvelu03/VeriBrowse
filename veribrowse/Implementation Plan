@@ -1,0 +1,56 @@
+# Implementation Plan: Advanced Agentic Browser Upgrades
+
+## Goal Description
+Enhance the VeriBrowse agent with five key features to push it towards a Level 4 autonomous system: Robust Evasion, Visual Laser Cursor, DOM Compression, Human-In-The-Loop (HITL), and a Secure Vault for semantic autofill.
+
+---
+
+## Proposed Changes
+
+### 1. Robust Evasion (Anti-Bot)
+Currently, basic Playwright is easily fingerprinted.
+- **Dependencies**: `npm install playwright-extra puppeteer-extra-plugin-stealth`
+#### [MODIFY] `main/core/BrowserManager.js`
+- Import `chromium` from `playwright-extra` instead of standard `playwright`.
+- Attach `puppeteer-extra-plugin-stealth` before launching the browser instance.
+
+### 2. Streaming UI (Laser Cursor & Bounding Boxes)
+The user should see what the agent is targeting before an action fires.
+#### [MODIFY] `main/interaction/interactionEngine.js`
+- Create an `injectSVGOverlay(page)` helper that floats an absolute SVG layer above the page `(z-index: 2147483647)`.
+- Use Playwright's `page.evaluate` to calculate the bounding box of the target selector.
+- Animate a red "laser" dot from current mouse position to the target, drawing a subtle bounding box around the target for 300ms before triggering the actual `click` or `type`.
+
+### 3. Advanced Context Management (DOM Compression)
+Raw text lacks spatial context; full DOM is too token-heavy.
+#### [MODIFY] `main/tools/browser/extract.js`
+- Modify the `page.evaluate` script. Instead of returning `document.body.innerText`, traverse the DOM and build a semantic map of interactable root nodes (`a`, `button`, `input`, `select`).
+- Return a compact JSON or Markdown list: `[Button: "Submit" (x:10, y:20)]`.
+- *Note: This will likely reduce the `CreditGuard` token usage dramatically.*
+
+### 4. Human-In-The-Loop (HITL) Interruption UI
+The agent needs to know how to ask for help (e.g., 2FA).
+#### [MODIFY] `main/core/WorkflowEngine.js`
+- Add a new status `SUSPENDED_FOR_HITL` in `executeWorkflow()`.
+- Expose an IPC channel `agent:needs-human` and pause the internal promise chain until `agent:resume` is received.
+#### [MODIFY] `renderer/components/agent/AgentPanel.jsx`
+- Listen for `agent:needs-human`. When true, display a bright banner: "Agent is waiting for your input." with a "Resume Task" button.
+
+### 5. Secure Vault & Semantic Autofill
+The agent shouldn't ask the user for their address every time it fills a form.
+#### [NEW] `main/services/VaultService.js`
+- Wrap Electron's `safeStorage` to encrypt strings and save them using `electron-store`.
+#### [MODIFY] `renderer/components/pages/SettingsPage.jsx` OR `VaultPage.jsx`
+- Add a UI for the user to securely add key-value pairs (e.g., "Full Name" -> "John Doe").
+#### [MODIFY] `main/planner/WorkflowSchema.js` & `executeAction.js`
+- Add an `accessVault(key)` tool allowing the agent to fetch decrypted data straight to memory during tasks.
+
+---
+
+## Verification Plan
+
+### Manual Verification
+1. **Evasion:** Run the agent against a known Cloudflare-protected site (e.g., Ticketmaster) and verify it isn't blocked on load.
+2. **Visual Trajectories:** Request any click/type task and watch the screen for the SVG red laser cursor animating between elements.
+3. **HITL:** Pause the agent mid-task (if manually triggered or hitting a 2FA flow), fill the field, click Resume, and ensure it continues planning.
+4. **Secure Vault:** Save a profile in Settings, ask the agent to "Fill out a contact form using my info," and verify it looks up the data seamlessly.

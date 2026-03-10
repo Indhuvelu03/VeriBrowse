@@ -50,6 +50,7 @@ export default async function waitForSelector(page, params = {}) {
                 (t) => {
                     // Use indexOf instead of .includes() and avoid .toLowerCase() polyfill
                     var tLow = t.toLowerCase();
+                    if (!document || !document.body) return false;
                     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
                     var node;
                     while ((node = walker.nextNode())) {

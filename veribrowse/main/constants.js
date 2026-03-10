@@ -96,7 +96,11 @@ Respond with a raw JSON array ONLY — no wrapper object, no markdown fences:
 
 Each step format:
 {
+<<<<<<< Updated upstream
   "type": "NAVIGATE" | "CLICK" | "TYPE" | "SELECT" | "SCROLL" | "EXTRACT" | "DONE",
+=======
+  "type": "NAVIGATE" | "CLICK" | "TYPE" | "SCROLL" | "EXTRACT" | "DONE" | "accessVault" | "suspend",
+>>>>>>> Stashed changes
   "description": "human-readable description",
   "goalText": "visible label/text of target element (REQUIRED for CLICK/TYPE/SELECT)",
   "selector": "[N] visual label ONLY — NEVER write CSS selectors here",
@@ -105,6 +109,8 @@ Each step format:
   "pressEnter": true,
   "url": "full URL (NAVIGATE only)",
   "direction": "down" | "up",
+  "key": "vault key name (accessVault only — e.g. 'Full Name', 'Email', 'Phone')",
+  "reason": "why human input is needed (suspend only)",
   "result": "REQUIRED for DONE — actual findings, not 'Task complete'"
 }
 
@@ -138,7 +144,35 @@ MANDATORY COLLAPSING RULES
    CSS selectors are fragile and break across frameworks (Angular, React, Vue).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<<<<<<< Updated upstream
 SELECT ACTION — Native Dropdowns
+=======
+BOOKING / FORM-FILLING STRATEGY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+For ticket booking (flights, trains, hotels) and complex forms:
+
+1. DATE FIELDS: Use TYPE directly with format "YYYY-MM-DD" or "DD/MM/YYYY" instead
+   of trying to click through calendar UI widgets. This avoids complex calendar interactions.
+
+2. AUTOCOMPLETE DROPDOWNS: TYPE the city/station name, wait for suggestions, then
+   CLICK the correct option from the dropdown list.
+
+3. PASSENGER DETAILS: Use accessVault to retrieve personal info before TYPE steps.
+   Plan: accessVault("Full Name") → TYPE into name field → accessVault("Email") → TYPE into email.
+
+4. LANDING PAGES & REDIRECTS: If you hit a marketing landing page (e.g., "Try Google Workspace" or "About Google") instead of the target content:
+    - Identify if there is a "Sign in" or "Login" button and click it if the goal requires it.
+    - Otherwise, use NAVIGATE to go back to the previous page or search results.
+
+5. PAYMENT PAGES: Always use "suspend" to hand control to the user for entering
+   payment details. NEVER attempt to type credit card numbers.
+
+6. MULTI-LEG FORMS: If the form spans multiple pages, fill one page at a time.
+   After submitting each page, add an EXTRACT to verify the next page loaded.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DONE STEP — CRITICAL
+>>>>>>> Stashed changes
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Use SELECT for native HTML <select> elements (passenger count, class, seat type, age group):
   { "type": "SELECT", "goalText": "number of passengers", "value": "2", "description": "Select 2 passengers" }
@@ -209,10 +243,17 @@ EXTRACT + DONE — CRITICAL
   ✅ RIGHT: "Cheapest: IndiGo 6E-123 08:00→10:00 ₹3,499"
 
 The "result" field MUST contain ACTUAL findings — NEVER write "Task complete" or "Done".
+<<<<<<< Updated upstream
 - Product search → "Top pick: [Name] — [Price] — ★[Rating] ([N] reviews). Also: [Name2] — [Price2]"
 - Booking search → "Cheapest: IndiGo 6E-123 08:00→10:00 ₹3,499 | Air India AI-802 ₹4,200"
 - Form filled    → "Passenger details filled. Seat 14A selected. Reached payment page."
 - Research task  → The key answer in 1–2 sentences with specific facts.
+=======
+- Product search → "Top pick: [Name] — [Price] — ★[Rating] ([N] reviews)"
+- Research task  → The key answer in 1–2 sentences.
+- Navigation     → Confirm what page was reached and what was found.
+- Booking task   → Confirm booking details: route, date, passengers, price.
+>>>>>>> Stashed changes
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 VISUAL GROUNDING

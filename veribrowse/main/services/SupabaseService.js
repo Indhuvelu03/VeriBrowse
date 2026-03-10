@@ -149,6 +149,57 @@ export async function clearHistory() {
         console.error('[SupabaseService] clearHistory failed:', err.message);
     }
 }
+// ─── AUTHENTICATION ────────────────────────────────────────────────────────
+export async function getAuthState() {
+    try {
+        const supabase = getSupabase();
+        if (!supabase) return null;
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        return session?.user || null;
+    } catch (err) {
+        console.error('[SupabaseService] getAuthState failed:', err.message);
+        return null;
+    }
+}
+
+export async function signIn(email, password) {
+    try {
+        const supabase = getSupabase();
+        if (!supabase) throw new Error("Supabase is not configured.");
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        return data.user;
+    } catch (err) {
+        console.error('[SupabaseService] signIn failed:', err.message);
+        throw err;
+    }
+}
+
+export async function signUp(email, password) {
+    try {
+        const supabase = getSupabase();
+        if (!supabase) throw new Error("Supabase is not configured.");
+        const { data, error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        return data.user;
+    } catch (err) {
+        console.error('[SupabaseService] signUp failed:', err.message);
+        throw err;
+    }
+}
+
+export async function signOut() {
+    try {
+        const supabase = getSupabase();
+        if (!supabase) return;
+        const { error } = await supabase.auth.signOut();
+        if (error) throw error;
+    } catch (err) {
+        console.error('[SupabaseService] signOut failed:', err.message);
+        throw err;
+    }
+}
 
 // ─── CHAT ───────────────────────────────────────────────────────────────────
 
@@ -247,9 +298,37 @@ export async function getDownloads(limit = 50, offset = 0) {
     }
 }
 
+export async function deleteDownload(id) {
+    try {
+        const supabase = getSupabase();
+        if (!supabase) {
+            const downloads = localStore.get('downloads', []);
+            const updated = downloads.filter(d => d.id !== id);
+            localStore.set('downloads', updated);
+            return true;
+        }
+
+        return await withRetry(async () => {
+            const { error } = await supabase
+                .from('downloads')
+                .delete()
+                .eq('id', id);
+            if (error) throw error;
+            return true;
+        }, 'deleteDownload');
+
+    } catch (err) {
+        console.error('[SupabaseService] deleteDownload failed:', err.message);
+        return false;
+    }
+}
+
 // ─── AGENT SKILLS ───────────────────────────────────────────────────────────
 
 export async function saveSkill(domain, skillName, goal, steps) {
+    console.warn('[SupabaseService] Skill memory is currently disabled.');
+    return;
+    /*
     try {
         const supabase = getSupabase();
         if (!supabase) {
@@ -286,9 +365,13 @@ export async function saveSkill(domain, skillName, goal, steps) {
     } catch (err) {
         console.error('[SupabaseService] saveSkill failed:', err.message);
     }
+    */
 }
 
 export async function recallSkill(domain, goal) {
+    console.warn('[SupabaseService] Skill memory is currently disabled.');
+    return null;
+    /*
     try {
         const supabase = getSupabase();
         if (!supabase) {
@@ -328,9 +411,13 @@ export async function recallSkill(domain, goal) {
         console.error('[SupabaseService] recallSkill failed:', err.message);
         return null;
     }
+    */
 }
 
 export async function getAllSkills() {
+    console.warn('[SupabaseService] Skill memory is currently disabled.');
+    return [];
+    /*
     try {
         const supabase = getSupabase();
         if (!supabase) {
@@ -357,9 +444,13 @@ export async function getAllSkills() {
         console.error('[SupabaseService] getAllSkills failed:', err.message);
         return [];
     }
+    */
 }
 
 export async function deleteSkill(id) {
+    console.warn('[SupabaseService] Skill memory is currently disabled.');
+    return;
+    /*
     try {
         const supabase = getSupabase();
         if (!supabase) {
@@ -379,6 +470,7 @@ export async function deleteSkill(id) {
     } catch (err) {
         console.error('[SupabaseService] deleteSkill failed:', err.message);
     }
+    */
 }
 
 // ─── PROMPT CACHE ──────────────────────────────────────────────────────────
@@ -469,6 +561,74 @@ export async function semanticSearch(query) {
 
     } catch (err) {
         console.error('[SupabaseService] semanticSearch failed:', err.message);
+        return [];
+    }
+}
+
+// ─── TASK TRACKING / RESUMPTION ───────────────────────────────────────────
+
+export async function saveTaskState(taskId, goal, status) {
+    try {
+        const supabase = getSupabase();
+        if (!supabase) {
+            const tasks = localStore.get('tasks', {});
+            tasks[taskId] = { goal, status, updated_at: new Date().toISOString() };
+            localStore.set('tasks', tasks);
+            return;
+        }
+
+        const embedding = await embed(goal);
+        await withRetry(async () => {
+            const { data: existing } = await supabase
+                .from('tasks')
+                .select('id')
+                .eq('id', taskId)
+                .maybeSingle();
+
+            if (existing?.id) {
+                const { error } = await supabase
+                    .from('tasks')
+                    .update({ status, updated_at: new Date() }) // Usually embedding doesn't change unless goal changes
+                    .eq('id', taskId);
+                if (error) throw error;
+            } else {
+                const { error } = await supabase
+                    .from('tasks')
+                    .insert({ id: taskId, goal, status, embedding });
+                if (error) throw error;
+            }
+        }, 'saveTaskState');
+    } catch (err) {
+        console.error('[SupabaseService] saveTaskState failed:', err.message);
+    }
+}
+
+export async function searchLeftoverTasks(query) {
+    try {
+        const supabase = getSupabase();
+        if (!supabase) {
+            console.warn('[SupabaseService] searchLeftoverTasks skipped (no Supabase). Using local fallback.');
+            const tasks = localStore.get('tasks', {});
+            // Extremely naive local search
+            const active = Object.values(tasks).filter(t => t.status === 'left_over' || t.status === 'paused');
+            return active.filter(t => t.goal.toLowerCase().includes(query.toLowerCase())).slice(0, 3);
+        }
+
+        return await withRetry(async () => {
+            const queryEmbedding = await embed(query);
+            if (!queryEmbedding) return []; // Fallback if embedding model unavailable
+
+            const { data, error } = await supabase.rpc('match_tasks', {
+                query_embedding: queryEmbedding,
+                match_threshold: 0.7,
+                match_count: 5,
+            });
+            if (error) throw error;
+            // Filter to return only non-completed tasks
+            return (data || []).filter(task => task.status === 'left_over' || task.status === 'paused' || task.status === 'running');
+        }, 'searchLeftoverTasks');
+    } catch (err) {
+        console.error('[SupabaseService] searchLeftoverTasks failed:', err.message);
         return [];
     }
 }

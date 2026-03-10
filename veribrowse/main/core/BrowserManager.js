@@ -15,8 +15,9 @@
  * should be removed.
  */
 
-import { WebContentsView } from 'electron';
+import { WebContentsView, Menu, clipboard } from 'electron';
 import { chromium } from 'playwright';
+import path from 'path';
 import bus from './EventBus.js';
 // StateSync is imported lazily to avoid circular imports (StateSync imports BrowserManager)
 let _attachStateSync = null;
@@ -81,17 +82,69 @@ class BrowserManager {
      * Called from background.js after the window is ready.
      */
     async init() {
+        // Native stealth: comprehensive args that prevent bot detection
+        // without depending on puppeteer-extra-plugin-stealth (which breaks webpack)
         this.browser = await chromium.launch({
+<<<<<<< Updated upstream
             headless: false,
             args: ['--disable-blink-features=AutomationControlled', '--no-sandbox'],
+=======
+            headless: true,
+            args: [
+                '--disable-blink-features=AutomationControlled',
+                '--no-sandbox',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-infobars',
+                '--disable-dev-shm-usage',
+                '--disable-setuid-sandbox',
+                '--no-first-run',
+                '--no-default-browser-check',
+                '--disable-extensions',
+                '--disable-component-extensions-with-background-pages',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+            ],
+>>>>>>> Stashed changes
         });
 
         this.context = await this.browser.newContext({
             viewport: { width: 1280, height: 800 },
             userAgent:
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            // Stealth: remove webdriver flag and automation indicators
+            bypassCSP: true,
         });
 
+<<<<<<< Updated upstream
+=======
+        // Suppress ad/sponsored network noise globally for all tabs.
+        await this.context.route('**/*', async (route) => {
+            try {
+                const req = route.request();
+                const url = req.url();
+                const type = req.resourceType();
+                const nav = req.isNavigationRequest();
+                const blocked = isAdOrSponsoredRequest(url);
+
+                // Detect Google Workspace landing page redirect (bot detection)
+                if (nav && String(url).toLowerCase().includes('workspace.google.com')) {
+                    console.warn(`[BrowserManager] Detected Workspace redirect: ${url}`);
+                    // If this is a shadow tab, we might want to flag it or retry
+                }
+
+                if (blocked && (type !== 'document' || isAdRedirectDoc)) {
+                    await route.abort('blockedbyclient').catch(() => route.abort());
+                    return;
+                }
+            } catch {
+                // fall through to continue
+            }
+            await route.continue();
+        });
+        console.log('[BrowserManager] Network ad filter enabled');
+
+>>>>>>> Stashed changes
         // Sync globals after context is ready
         global.playwrightBrowser = this.browser;
         global.playwrightContext = this.context;
@@ -250,6 +303,81 @@ class BrowserManager {
 
         this.mainWindow.contentView.addChildView(view);
         view.setBounds({ x: 0, y: 0, width: 0, height: 0 }); // hidden until resize
+
+        // ─── Native Context Menu ──────────────────────────────────────────────
+        view.webContents.on('context-menu', (e, props) => {
+            const template = [];
+
+            if (props.linkURL) {
+                template.push({
+                    label: 'Copy Link Address',
+                    click: () => clipboard.writeText(props.linkURL)
+                });
+            }
+
+            if (props.hasImageContents) {
+                template.push({
+                    label: 'Save Image As...',
+                    click: () => view.webContents.downloadURL(props.srcURL)
+                });
+                template.push({
+                    label: 'Copy Image URL',
+                    click: () => clipboard.writeText(props.srcURL)
+                });
+            }
+
+            if (!props.hasImageContents && !props.linkURL) {
+                template.push({ label: 'Back', click: () => view.webContents.goBack(), enabled: view.webContents.canGoBack() });
+                template.push({ label: 'Forward', click: () => view.webContents.goForward(), enabled: view.webContents.canGoForward() });
+                template.push({ type: 'separator' });
+                template.push({ label: 'Refresh', click: () => view.webContents.reload() });
+            }
+
+            if (template.length > 0) {
+                const menu = Menu.buildFromTemplate(template);
+                menu.popup({ window: this.mainWindow });
+            }
+        });
+
+        // ─── Download Tracking ────────────────────────────────────────────────
+        view.webContents.session.on('will-download', (event, item, webContents) => {
+            const fileName = item.getFilename();
+            const url = item.getURL();
+            const mimeType = item.getMimeType();
+            const id = Date.now().toString() + Math.random().toString(36).slice(2, 6);
+
+            item.on('updated', (event, state) => {
+                if (state === 'interrupted') {
+                    this.sendToRenderer('browser:download-progress', { id, fileName, state: 'interrupted' });
+                } else if (state === 'progressing') {
+                    if (item.isPaused()) {
+                        this.sendToRenderer('browser:download-progress', { id, fileName, state: 'paused' });
+                    } else {
+                        this.sendToRenderer('browser:download-progress', {
+                            id, fileName, state: 'progressing',
+                            receivedBytes: item.getReceivedBytes(),
+                            totalBytes: item.getTotalBytes()
+                        });
+                    }
+                }
+            });
+
+            item.once('done', async (e, state) => {
+                if (state === 'completed') {
+                    const savePath = item.getSavePath();
+                    const fileSize = item.getReceivedBytes();
+                    try {
+                        const SupabaseService = await import('../services/SupabaseService.js');
+                        await SupabaseService.addDownload(fileName, url, savePath, fileSize, mimeType);
+                    } catch (err) {
+                        console.error('[BrowserManager] Failed to save download history:', err);
+                    }
+                    this.sendToRenderer('browser:download-completed', { id, fileName, state: 'completed', savePath });
+                } else {
+                    this.sendToRenderer('browser:download-completed', { id, fileName, state });
+                }
+            });
+        });
 
         this.userTabs.set(tabId, { ...entry, electronBrowserView: view });
         console.log(`[BrowserManager] WebContentsView created (hidden) for tab ${tabId}`);

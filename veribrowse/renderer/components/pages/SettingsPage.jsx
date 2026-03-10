@@ -1,7 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+<<<<<<< Updated upstream
 import { Settings, X, Database, Bot, Save, CheckCircle, Shield, Key, User, Mail, Phone, Lock, AtSign, Calendar, MapPin, CreditCard } from 'lucide-react';
+=======
+import { Settings, X, Database, Bot, Save, CheckCircle, Shield, Key } from 'lucide-react';
+>>>>>>> Stashed changes
 import { useUIStore } from '../../store/uiStore';
 import { motion } from 'framer-motion';
 
@@ -12,6 +16,7 @@ export default function SettingsPage() {
         supabaseUrl: '',
         supabaseAnonKey: ''
     });
+<<<<<<< Updated upstream
     const [profile, setProfile] = useState({
         name: '',
         email: '',
@@ -23,6 +28,12 @@ export default function SettingsPage() {
         city: '',
         idNumber: '',
     });
+=======
+    const [authEmail, setAuthEmail] = useState('');
+    const [authPassword, setAuthPassword] = useState('');
+    const [user, setUser] = useState(null);
+    const [authLoading, setAuthLoading] = useState(false);
+>>>>>>> Stashed changes
 
     useEffect(() => {
         if (window.electronAPI?.settings) {
@@ -35,6 +46,11 @@ export default function SettingsPage() {
                     supabaseUrl: sUrl || '',
                     supabaseAnonKey: sAKey || ''
                 });
+
+                if (window.electronAPI.auth) {
+                    const currentUser = await window.electronAPI.auth.getState();
+                    setUser(currentUser);
+                }
             };
             load();
         }
@@ -83,6 +99,40 @@ export default function SettingsPage() {
         closeOverlays();
     };
 
+    const handleAuthAction = async (action) => {
+        if (!window.electronAPI?.auth) return;
+        setAuthLoading(true);
+        try {
+            if (action === 'signOut') {
+                await window.electronAPI.auth.signOut();
+                setUser(null);
+                addToast('Signed out successfully', 'success');
+            } else {
+                if (!authEmail || !authPassword) {
+                    addToast('Please enter both email and password', 'error');
+                    setAuthLoading(false);
+                    return;
+                }
+                const res = action === 'signIn'
+                    ? await window.electronAPI.auth.signIn(authEmail, authPassword)
+                    : await window.electronAPI.auth.signUp(authEmail, authPassword);
+
+                if (res.error) {
+                    addToast(res.error, 'error');
+                } else if (res.user) {
+                    setUser(res.user);
+                    addToast(`Successfully ${action === 'signIn' ? 'logged in' : 'signed up'}!`, 'success');
+                    setAuthEmail('');
+                    setAuthPassword('');
+                }
+            }
+        } catch (e) {
+            addToast(e.message || 'Authentication error', 'error');
+        } finally {
+            setAuthLoading(false);
+        }
+    };
+
 
     return (
         <motion.div
@@ -109,6 +159,65 @@ export default function SettingsPage() {
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto p-8 max-w-2xl mx-auto w-full space-y-12">
+
+                {/* Auth Profile */}
+                <section className="space-y-6">
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center">
+                            <Bot size={16} className="text-purple-500" />
+                        </div>
+                        <h3 className="text-xs font-bold text-white uppercase tracking-[0.2em]">Auth Profile</h3>
+                    </div>
+
+                    <div className="space-y-4 bg-white/[0.02] border border-white/5 p-6 rounded-2xl">
+                        {user ? (
+                            <div className="flex flex-col gap-4">
+                                <div className="p-3 rounded-lg bg-green-500/5 border border-green-500/10 flex items-center gap-3">
+                                    <CheckCircle size={14} className="text-green-500" />
+                                    <p className="text-[12px] text-green-400">Logged in as: <span className="font-bold">{user.email}</span></p>
+                                </div>
+                                <button
+                                    onClick={() => handleAuthAction('signOut')}
+                                    disabled={authLoading}
+                                    className="h-10 w-32 bg-red-500/10 text-red-500 hover:bg-red-500/20 rounded-xl text-xs font-bold uppercase tracking-widest transition-all disabled:opacity-50"
+                                >
+                                    {authLoading ? 'Signing Out...' : 'Sign Out'}
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="flex gap-4">
+                                <input
+                                    type="email"
+                                    value={authEmail}
+                                    onChange={(e) => setAuthEmail(e.target.value)}
+                                    placeholder="Email Address"
+                                    className="flex-1 h-12 bg-black/40 border border-white/5 rounded-xl px-4 text-sm text-white focus:outline-none focus:border-white/20 transition-all font-mono"
+                                />
+                                <input
+                                    type="password"
+                                    value={authPassword}
+                                    onChange={(e) => setAuthPassword(e.target.value)}
+                                    placeholder="Password"
+                                    className="flex-1 h-12 bg-black/40 border border-white/5 rounded-xl px-4 text-sm text-white focus:outline-none focus:border-white/20 transition-all font-mono"
+                                />
+                                <button
+                                    onClick={() => handleAuthAction('signIn')}
+                                    disabled={authLoading}
+                                    className="px-6 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold uppercase tracking-widest transition-all disabled:opacity-50"
+                                >
+                                    Log In
+                                </button>
+                                <button
+                                    onClick={() => handleAuthAction('signUp')}
+                                    disabled={authLoading}
+                                    className="px-6 border border-white/20 hover:bg-white/5 text-white rounded-xl text-xs font-bold uppercase tracking-widest transition-all disabled:opacity-50"
+                                >
+                                    Sign Up
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </section>
 
                 {/* AI Profile */}
                 <section className="space-y-6">

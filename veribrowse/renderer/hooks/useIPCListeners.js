@@ -161,9 +161,9 @@ export default function useIPCListeners() {
                 thought: step.thought || step.reasoning || '',
                 status: step.status === 'success' ? 'done'
                     : step.status === 'fail' ? 'failed'
-                    : step.status === 'warn' ? 'warn'
-                    : step.status === 'running' ? 'running'
-                    : 'executing',
+                        : step.status === 'warn' ? 'warn'
+                            : step.status === 'running' ? 'running'
+                                : 'executing',
                 result: step.result || step.verification || null,
                 error: step.error || null,
                 stepIndex: step.stepIndex || null,

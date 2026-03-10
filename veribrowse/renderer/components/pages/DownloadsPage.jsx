@@ -19,6 +19,14 @@ export default function DownloadsPage() {
         if (window.electronAPI?.downloads) window.electronAPI.downloads.showInFolder(path);
     };
 
+    const handleRemove = async (id) => {
+        if (!window.electronAPI?.downloads) return;
+        const success = await window.electronAPI.downloads.remove(id);
+        if (success) {
+            setDownloads(prev => prev.filter(d => d.id !== id));
+        }
+    };
+
     return (
         <motion.div
             initial={{ x: '-100%' }}
@@ -66,6 +74,7 @@ export default function DownloadsPage() {
                                     <FolderOpen size={18} />
                                 </button>
                                 <button
+                                    onClick={() => handleRemove(item.id)}
                                     className="p-2 text-gray-400 hover:text-red-400 hover:bg-white/10 rounded-lg transition-all"
                                     title="Remove"
                                 >

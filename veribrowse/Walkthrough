@@ -1,0 +1,74 @@
+# Walkthrough: Bug Fixes + Multi-Tab Research + Ticket Booking
+
+## Phase 1: Bug Fixes (4 issues)
+
+### 1. Critical Startup Crash — Stealth Plugin
+`puppeteer-extra-plugin-stealth` uses `merge-deep` → `unsupported` module, which Electron's webpack can't resolve.
+
+**Fix**: Replaced plugin with native Playwright stealth args (14 Chrome flags + `bypassCSP`).
+
+render_diffs(file:///c:/Users/INDHU/OneDrive/Pictures/VeriBrowse/veribrowse/main/core/BrowserManager.js)
+
+### 2–3. `generateReport` Case Mismatch + Wrong Import Path
+Schema defined `generateReport` but handler matched `GENERATE_REPORT`. Import path pointed to `../system/` (non-existent).
+
+render_diffs(file:///c:/Users/INDHU/OneDrive/Pictures/VeriBrowse/veribrowse/main/tools/browser/executeAction.js)
+
+### 4. SkillMemory Disabled
+Commented out imports and all `recall()`/`saveFromUrl()` calls in 3 files:
+- [AutonomousLoop.js](file:///c:/Users/INDHU/OneDrive/Pictures/VeriBrowse/veribrowse/main/core/agent/AutonomousLoop.js)
+- [AgentRuntime.js](file:///c:/Users/INDHU/OneDrive/Pictures/VeriBrowse/veribrowse/main/core/agent/AgentRuntime.js)
+- Siderail already had Skills commented out
+
+---
+
+## Phase 2: Multi-Tab Web Research Agent
+
+### [NEW] [ResearchOrchestrator.js](file:///c:/Users/INDHU/OneDrive/Pictures/VeriBrowse/veribrowse/main/agents/ResearchOrchestrator.js)
+
+Orchestrates multi-tab research in 3 stages:
+1. **Decompose** — LLM breaks the goal into 3–5 Google search queries
+2. **Extract** — Opens each query in a shadow tab, waits for load, extracts content
+3. **Report** — Aggregates findings and generates a markdown report via `generateReport.js`
+
+### Modified: [WorkflowEngine.js](file:///c:/Users/INDHU/OneDrive/Pictures/VeriBrowse/veribrowse/main/core/WorkflowEngine.js)
+- `_handleDeep()` now detects research keywords and routes to `ResearchOrchestrator`
+- Non-research deep tasks still use single-tab `AgentRuntime`
+
+---
+
+## Phase 3: Ticket Booking Enhancements
+
+### Modified: [constants.js](file:///c:/Users/INDHU/OneDrive/Pictures/VeriBrowse/veribrowse/main/constants.js) — PLANNER_PROMPT
+Added booking-specific planning rules:
+- **Date fields**: TYPE directly instead of clicking calendar widgets
+- **Autocomplete**: Type slowly, wait for dropdown, click suggestion
+- **Passenger details**: Use `accessVault` for personal info retrieval
+- **Payment pages**: Use `suspend` for HITL handoff
+- **Multi-leg forms**: Fill one page at a time, EXTRACT to verify
+
+### Modified: [fillForm.js](file:///c:/Users/INDHU/OneDrive/Pictures/VeriBrowse/veribrowse/main/tools/browser/fillForm.js)
+Enhanced with:
+- **Date input**: Native `fill()` → fallback to JS value setter with `input`/`change` events
+- **Autocomplete**: `pressSequentially()` with 80ms delay → wait → click suggestion
+- **Field type hint**: New `type` parameter (`date`, `autocomplete`) for caller guidance
+
+### Modified: [executeAction.js](file:///c:/Users/INDHU/OneDrive/Pictures/VeriBrowse/veribrowse/main/tools/browser/executeAction.js)
+Added `suspend` case — emits `agent:needs-human` via EventBus for payment page HITL.
+
+---
+
+## Files Changed Summary
+
+| File | Change |
+|------|--------|
+| `BrowserManager.js` | Replaced stealth plugin with native args |
+| `AutonomousLoop.js` | Disabled SkillMemory (4 locations) |
+| `AgentRuntime.js` | Disabled SkillMemory import + stats |
+| `executeAction.js` | Fixed generateReport case + path, added `suspend` |
+| `fillForm.js` | Added date/autocomplete handling |
+| `constants.js` | Added booking strategies to PLANNER_PROMPT |
+| `WorkflowEngine.js` | Wired ResearchOrchestrator |
+| `ResearchOrchestrator.js` | **NEW** — multi-tab research agent |
+| `preload.js` | Added Vault IPCs + `agent:needs-human` channel |
+| `background.js` | Added `agent:needs-human` bridge |

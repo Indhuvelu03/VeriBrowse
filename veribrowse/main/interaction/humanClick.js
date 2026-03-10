@@ -23,7 +23,11 @@ import {
     randInt, naturalJitter, hoverPause, hesitation,
     actionCooldown, easeInOut, randomDelay
 } from './humanTiming.js';
+<<<<<<< Updated upstream
 import { initCursor, updateCursorPosition, showClickFeedback, setCursorTransitionDuration } from './cursorManager.js';
+=======
+import { initCursor, updateCursorPosition, showClickFeedback, showBoundingBox, hideBoundingBox } from './cursorManager.js';
+>>>>>>> Stashed changes
 
 // ─── Internal state: track cursor's last known position ────────────────────
 // Allows movement to START from the correct position instead of (0,0) every time.
@@ -126,7 +130,7 @@ export async function moveCursorTo(page, targetX, targetY, options = {}) {
  *
  * @param {import('playwright').Page} page
  * @param {string} selector
- * @returns {Promise<{ x: number, y: number, found: boolean }>}
+ * @returns {Promise<{ x: number, y: number, found: boolean, box?: any }>}
  */
 export async function resolveElementCenter(page, selector) {
     try {
@@ -136,7 +140,7 @@ export async function resolveElementCenter(page, selector) {
         const jitter = naturalJitter(Math.min(box.width * 0.12, 6));
         const x = Math.round(box.x + box.width / 2 + jitter.dx);
         const y = Math.round(box.y + box.height / 2 + jitter.dy);
-        return { x, y, found: true };
+        return { x, y, found: true, box };
     } catch {
         return { x: _cursorX, y: _cursorY, found: false };
     }
@@ -206,6 +210,7 @@ export async function humanClickElement(page, selector, fallbackText, options = 
     // ── Strategy 1: CSS selector + human cursor movement ──
     if (selector) {
         try {
+<<<<<<< Updated upstream
             await page.waitForSelector(selector, { state: 'visible', timeout: 5000 });
             // Scroll the element into the viewport before resolving coordinates.
             // Without this, elements below the fold have coordinates outside the visible
@@ -239,6 +244,19 @@ export async function humanClickElement(page, selector, fallbackText, options = 
                     // otherwise waits for the parsing to complete.
                     await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => {});
                 }
+=======
+            // Use a shorter timeout when we have a text fallback — fail fast and let text strategy win
+            const selectorTimeout = fallbackText ? 1500 : 5000;
+            await page.waitForSelector(selector, { state: 'visible', timeout: selectorTimeout });
+            const { x, y, found, box } = await resolveElementCenter(page, selector);
+
+            if (found) {
+                if (box) await showBoundingBox(page, box.x, box.y, box.width, box.height);
+                await humanClickAt(page, x, y, options);
+                if (box) await hideBoundingBox(page);
+                // Wait for potential navigation after click
+                await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => { });
+>>>>>>> Stashed changes
                 return { success: true, method: 'selector+human-cursor' };
             }
         } catch (e) {
@@ -265,6 +283,7 @@ export async function humanClickElement(page, selector, fallbackText, options = 
                 const jitter = naturalJitter(4);
                 const x = Math.round(box.x + box.width / 2 + jitter.dx);
                 const y = Math.round(box.y + box.height / 2 + jitter.dy);
+<<<<<<< Updated upstream
                 const preClickUrl2 = page.url();
                 await humanClickAt(page, x, y, options);
                 if (page.url() === preClickUrl2) {
@@ -275,6 +294,12 @@ export async function humanClickElement(page, selector, fallbackText, options = 
                 } else {
                     await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => {});
                 }
+=======
+                await showBoundingBox(page, box.x, box.y, box.width, box.height);
+                await humanClickAt(page, x, y, options);
+                await hideBoundingBox(page);
+                await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => { });
+>>>>>>> Stashed changes
                 return { success: true, method: 'text+human-cursor' };
             }
         } catch (e) {

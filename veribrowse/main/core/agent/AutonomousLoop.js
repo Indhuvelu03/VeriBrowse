@@ -35,7 +35,11 @@ import verifyAction from '../../verification/verifyAction.js';
 import { markPage, unmarkPage } from '../../tools/browser/visualGrounding.js';
 import * as AgentReasoner from './AgentReasoner.js';
 import * as LocalSelector from './LocalSelectorService.js';
+<<<<<<< Updated upstream
 // import * as SkillMemory from './SkillMemory.js'; // DISABLED — SkillMemory commented out
+=======
+// import * as SkillMemory from './SkillMemory.js'; // Disabled per user request
+>>>>>>> Stashed changes
 import bus from '../EventBus.js';
 import compactor from '../ContextCompactor.js';
 import UIFeedback from '../UIFeedback.js';
@@ -138,6 +142,33 @@ function checkAbort(signal) {
     if (signal && signal.aborted) {
         throw new DOMException('Autonomous loop cancelled by user', 'AbortError');
     }
+}
+
+async function waitForResume(signal) {
+    return new Promise((resolve, reject) => {
+        const onResume = () => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        };
+        const onAbort = () => {
+            bus.removeListener('workflow:resume', onResume);
+            reject(new DOMException('Cancelled while paused', 'AbortError'));
+        };
+        bus.once('workflow:resume', onResume);
+        signal?.addEventListener('abort', onAbort);
+    });
+}
+
+function isCaptchaPresent(snapshot) {
+    if (!snapshot || !snapshot.visibleText) return false;
+    const text = snapshot.visibleText.toLowerCase();
+    return (
+        text.includes('captcha') ||
+        text.includes('verify you are a human') ||
+        text.includes('prove you are not a robot') ||
+        text.includes('select all squares with') ||
+        snapshot.overlays?.some(o => /captcha|hcaptcha|recaptcha/i.test(o.selector || ''))
+    );
 }
 
 async function tryDismissOverlay(page) {
@@ -620,6 +651,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
         screenshot = grounded.screenshot;
         groundingMap = grounded.groundingMap;
 
+<<<<<<< Updated upstream
         // SkillMemory disabled — always call AgentReasoner.planSteps()
         // const cachedSkill = await SkillMemory.recall(domain, goal);
         // if (cachedSkill && cachedSkill.length > 0) { ... }
@@ -630,6 +662,27 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
         llmCalls++;
         console.log(`[AutonomousLoop] LLM generated ${plan.length}-step plan (1 LLM call)`);
         emitStep({ thought: `AI generated a ${plan.length}-step plan`, action: 'PLAN', status: 'success' });
+=======
+        // SkillMemory disabled per user request
+        // Try SkillMemory first (ZERO LLM calls)
+        // const cachedSkill = await SkillMemory.recall(domain, goal);
+        const cachedSkill = null;
+        if (cachedSkill && cachedSkill.length > 0) {
+            plan = cachedSkill.slice(0, MAX_PLAN_STEPS);
+            usedSkillMemory = true;
+            // Seed selector cache from skill
+            LocalSelector.seedFromSkill(domain, cachedSkill);
+            console.log(`[AutonomousLoop] Using cached skill (${plan.length} steps) — ZERO LLM calls!`);
+            emitStep({ thought: `Found cached skill with ${plan.length} steps — no AI needed!`, action: 'SKILL_HIT', status: 'success' });
+        } else {
+            // Call AgentReasoner.planSteps() — the ONE LLM call for this task
+            plan = await AgentReasoner.planSteps(goal, snapshot, screenshot);
+            plan = plan.slice(0, MAX_PLAN_STEPS);
+            llmCalls++;
+            console.log(`[AutonomousLoop] LLM generated ${plan.length}-step plan (1 LLM call)`);
+            emitStep({ thought: `AI generated a ${plan.length}-step plan`, action: 'PLAN', status: 'success' });
+        }
+>>>>>>> Stashed changes
 
         if (plan.length === 0) {
             emitStep({ thought: 'No actionable plan could be generated', action: 'ABORT', status: 'fail' });
@@ -687,8 +740,17 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
                 executedSteps.push({ ...currentStep, result, _success: true });
                 setState(States.DONE);
 
+<<<<<<< Updated upstream
                 // SkillMemory disabled — skill saving skipped
                 // SkillMemory.saveFromUrl(page.url(), goal, executedSteps).catch(...)
+=======
+                // SkillMemory disabled per user request
+                // if (!usedSkillMemory && executedSteps.length > 1) {
+                //     SkillMemory.saveFromUrl(page.url(), goal, executedSteps).catch(e =>
+                //         console.warn('[AutonomousLoop] Skill save failed:', e.message)
+                //     );
+                // }
+>>>>>>> Stashed changes
 
                 return { success: true, state: States.DONE, steps: executedSteps, llmCalls };
             }
@@ -803,6 +865,43 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
                     totalSteps: plan.length,
                 });
                 console.log(`[AutonomousLoop] Step ${stepIndex + 1}/${plan.length}: ${actionLabel}`);
+
+                // ── Human-In-The-Loop: Explicit Suspend OR CAPTCHA detection ──
+                const needsHuman = action.type === 'suspend' || isCaptchaPresent(snapshot);
+                if (needsHuman) {
+                    setState(States.PAUSED);
+                    const reason = action.type === 'suspend' ? (action.params?.reason || action.reasoning) : 'CAPTCHA or verification required';
+
+                    emitStep({
+                        thought: `Pausing: ${reason}`,
+                        action: 'SUSPENDED_FOR_HITL',
+                        status: 'warn'
+                    });
+
+                    // Emit to renderer to show the HITL UI
+                    bus.emit('agent:needs-human', {
+                        goal,
+                        reason,
+                        stepIndex: stepIndex + 1
+                    });
+
+                    console.log(`[AutonomousLoop] PAUSED for HITL: ${reason}`);
+                    await waitForResume(signal);
+                    console.log('[AutonomousLoop] RESUMED from HITL');
+
+                    setState(States.ACTING);
+                    // Take fresh snapshot after resume
+                    snapshot = await getDOMSnapshot(page).catch(() => snapshot);
+                    // Re-resolve action in case the page changed during pause
+                    if (action.type !== 'suspend') {
+                        action = await resolveStepToAction(currentStep, snapshot, screenshotForStep, groundingMap);
+                    } else {
+                        // If it was an explicit suspend, just skip to next step after resume
+                        stepSuccess = true;
+                        executedSteps.push({ ...action, ...currentStep, _success: true });
+                        break;
+                    }
+                }
 
                 // ── Execute ──
                 try {
@@ -1083,8 +1182,17 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
             emitStep({ thought: 'Reached safety action limit — stopping', action: 'MAX_ACTIONS', status: 'warn' });
         }
 
+<<<<<<< Updated upstream
         // SkillMemory disabled — skill saving skipped
         // SkillMemory.saveFromUrl(page.url(), goal, executedSteps).catch(...)
+=======
+        // SkillMemory disabled per user request
+        // if (executedSteps.length > 0 && !usedSkillMemory) {
+        //     SkillMemory.saveFromUrl(page.url(), goal, executedSteps).catch(e =>
+        //         console.warn('[AutonomousLoop] Skill save failed:', e.message)
+        //     );
+        // }
+>>>>>>> Stashed changes
 
         setState(States.DONE);
         return { success: true, state: States.DONE, steps: executedSteps, llmCalls };

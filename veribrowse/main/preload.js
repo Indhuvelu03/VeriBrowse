@@ -22,6 +22,12 @@ const allowedChannels = [
   'browser:user-tab-updated',
   'browser:user-tab-closed',
   'browser:user-tab-switched',
+<<<<<<< Updated upstream
+=======
+  'browser:live-frame',
+  'browser:download-progress',
+  'browser:download-completed',
+>>>>>>> Stashed changes
   'browser:shadow-tab-created',
   'browser:shadow-tab-updated',
   'browser:shadow-tab-closed',
@@ -35,6 +41,7 @@ const allowedChannels = [
   'agent:state-change',
   'agent:intent-classified',
   'agent:rate-limited',
+  'agent:needs-human',
   'credit:updated',
   'credit:warning',
   'credit:critical',
@@ -56,6 +63,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     autonomous: (goal) => ipcRenderer.invoke('agent:autonomous', { goal }),
     cancelAutonomous: () => ipcRenderer.send('agent:cancel-autonomous'),
     generateTitle: (userMsg, agentMsg) => ipcRenderer.invoke('agent:generate-title', { userMsg, agentMsg }),
+    vault: {
+      list: () => ipcRenderer.invoke('agent:vault-list'),
+      get: (key) => ipcRenderer.invoke('agent:vault-get', key),
+      set: (key, value) => ipcRenderer.invoke('agent:vault-set', { key, value }),
+      delete: (key) => ipcRenderer.invoke('agent:vault-delete', key),
+    }
   },
 
   // ─── Browser & Tabs ───────────────────────────────────────────────────────
@@ -72,6 +85,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
 
+  // ─── Authentication ─────────────────────────────────────────────────────────
+  auth: {
+    getState: () => ipcRenderer.invoke('auth:get-state'),
+    signIn: (email, password) => ipcRenderer.invoke('auth:sign-in', { email, password }),
+    signUp: (email, password) => ipcRenderer.invoke('auth:sign-up', { email, password }),
+    signOut: () => ipcRenderer.invoke('auth:sign-out'),
+  },
 
   // ─── Settings ─────────────────────────────────────────────────────────────
   settings: {
@@ -104,6 +124,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   downloads: {
     get: () => ipcRenderer.invoke('browser:get-downloads'),
     showInFolder: (filePath) => ipcRenderer.send('browser:show-item', filePath),
+    remove: (id) => ipcRenderer.invoke('browser:delete-download', id),
   },
 
   // ─── Chat History (Bug #6 fix) ─────────────────────────────────────────────
