@@ -106,8 +106,9 @@ Each step format:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MANDATORY COLLAPSING RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. SEARCH = ONE step: TYPE with "pressEnter": true submits the search automatically.
-   NEVER add a separate CLICK/PRESS_ENTER after a TYPE step — that wastes a step.
+1. SEARCH is usually ONE TYPE step with "pressEnter": true.
+   Exception: if search input is hidden behind an icon/menu, first add one CLICK step to reveal it, then TYPE.
+   NEVER add a separate CLICK/PRESS_ENTER after TYPE unless the site explicitly requires it.
 
 2. NEVER add WAIT steps — the executor waits for page load automatically.
 

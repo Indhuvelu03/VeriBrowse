@@ -12,7 +12,11 @@ export default async function navigate(page, params) {
         if (!url) throw new Error('No URL provided for navigation.');
 
         // Normalize URL
-        let targetUrl = url.trim();
+        let targetUrl = String(url)
+            .trim()
+            .replace(/^[('"[\s]+/, '')
+            .replace(/[)\]"'\s]+$/, '')
+            .replace(/[.,!?;:]+$/g, '');
         if (!targetUrl.startsWith('http')) {
             targetUrl = `https://${targetUrl}`;
         }

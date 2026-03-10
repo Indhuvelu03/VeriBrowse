@@ -45,6 +45,7 @@ const MAX_PLAN_STEPS = 12;   // max steps in a plan
 const MAX_STEP_RETRIES = 3;    // retries per step before replan
 const MAX_REPLAN_ATTEMPTS = 2;    // max times we ask the LLM to replan
 const MAX_TOTAL_ACTIONS = 20;   // absolute safety ceiling
+const SEARCH_REVEAL_ATTEMPTS = 2;
 
 // Common overlay / modal dismiss selectors
 const OVERLAY_DISMISS_SELECTORS = [
@@ -52,10 +53,18 @@ const OVERLAY_DISMISS_SELECTORS = [
     "div[role='dialog'] button:has-text('Close')",
     "div[role='dialog'] button:has-text('No thanks')",
     "div[role='dialog'] button:has-text('Not now')",
+    "div[role='dialog'] button:has-text('Continue without')",
+    "div[role='dialog'] button:has-text('Skip')",
+    "div[role='dialog'] button:has-text('Maybe later')",
+    "button[aria-label*='close' i]",
+    "button[aria-label*='dismiss' i]",
+    "button[aria-label*='cancel' i]",
     "button[aria-label='Close']",
     "button[aria-label='Dismiss']",
     ".modal button.close",
     ".popup button.close",
+    "[data-testid*='close']",
+    "[class*='close']",
     "button:has-text('Accept')",
     "button:has-text('Got it')",
     "button:has-text('OK')",
@@ -99,6 +108,150 @@ async function tryDismissOverlay(page) {
         } catch { /* skip */ }
     }
     return false;
+}
+
+async function tryDismissOverlayWithJS(page) {
+    try {
+        const clicked = await page.evaluate(() => {
+            function tr(s) { return s ? s.replace(/^\s+|\s+$/g, '') : ''; }
+            function lower(s) { return tr(s).toLowerCase(); }
+            function toNum(v, fallback) {
+                var n = +(v == null ? '' : v);
+                return n === n ? n : fallback;
+            }
+
+            function visible(el) {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                if (!rect || rect.width < 2 || rect.height < 2) return false;
+                const st = window.getComputedStyle(el);
+                if (!st) return false;
+                if (st.display === 'none' || st.visibility === 'hidden') return false;
+                if (toNum(st.opacity || '1', 1) < 0.05) return false;
+                return true;
+            }
+
+            const dialogs = document.querySelectorAll(
+                '[role="dialog"], [aria-modal="true"], .modal, .popup, .overlay, [class*="modal"], [class*="overlay"]'
+            );
+
+            for (let i = 0; i < dialogs.length; i++) {
+                const dialog = dialogs[i];
+                if (!visible(dialog)) continue;
+                const candidates = dialog.querySelectorAll('button, [role="button"], [aria-label]');
+                for (let j = 0; j < candidates.length; j++) {
+                    const el = candidates[j];
+                    if (!visible(el)) continue;
+                    const blob = lower(
+                        (el.innerText || '') + ' ' +
+                        (el.getAttribute('aria-label') || '') + ' ' +
+                        (el.getAttribute('title') || '')
+                    );
+
+                    if (
+                        /close/.test(blob) ||
+                        /dismiss/.test(blob) ||
+                        /not now/.test(blob) ||
+                        /no thanks/.test(blob) ||
+                        /continue without/.test(blob) ||
+                        /skip/.test(blob) ||
+                        /cancel/.test(blob) ||
+                        /maybe later/.test(blob)
+                    ) {
+                        el.click();
+                        return true;
+                    }
+                }
+            }
+            return false;
+        });
+
+        if (clicked) {
+            await page.waitForTimeout(350);
+            emitStep({ thought: 'Dismissed a popup/overlay', action: 'dismiss_overlay', status: 'success' });
+            return true;
+        }
+    } catch {
+        // no-op
+    }
+    return false;
+}
+
+async function dismissInterruptions(page, maxPasses = 2) {
+    let dismissedAny = false;
+    for (let i = 0; i < maxPasses; i++) {
+        let dismissedThisPass = false;
+
+        if (await tryDismissOverlay(page)) {
+            dismissedThisPass = true;
+        }
+        if (await tryDismissOverlayWithJS(page)) {
+            dismissedThisPass = true;
+        }
+
+        // Many sites bind ESC to close consent/login modals.
+        try {
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(100);
+        } catch {
+            // no-op
+        }
+
+        dismissedAny = dismissedAny || dismissedThisPass;
+        if (!dismissedThisPass) break;
+    }
+    return dismissedAny;
+}
+
+function isSearchTypeStep(step) {
+    if (!step || step.type !== 'TYPE') return false;
+    const blob = `${step.goalText || ''} ${step.description || ''}`.toLowerCase();
+    return /\b(search|find|query|look up|lookup)\b/.test(blob);
+}
+
+async function ensureSearchFieldOpen(page, step, snapshot) {
+    if (!isSearchTypeStep(step)) {
+        return { opened: false, snapshot };
+    }
+    if (LocalSelector.hasVisibleSearchInput(snapshot)) {
+        return { opened: false, snapshot };
+    }
+
+    for (let attempt = 1; attempt <= SEARCH_REVEAL_ATTEMPTS; attempt++) {
+        const trigger = LocalSelector.resolveSearchTrigger(snapshot);
+        if (!trigger) break;
+
+        emitStep({
+            thought: 'Search field is hidden; opening search UI first',
+            action: `CLICK ${trigger.selector || trigger.fallbackText || 'search trigger'}`,
+            status: 'running',
+        });
+
+        try {
+            await executeAction({
+                type: 'CLICK',
+                selector: trigger.selector,
+                text: trigger.fallbackText || 'search',
+                reasoning: 'Reveal hidden search input',
+            }, page);
+
+            await page.waitForTimeout(300);
+            const refreshed = await getDOMSnapshot(page).catch(() => snapshot);
+            if (LocalSelector.hasVisibleSearchInput(refreshed)) {
+                emitStep({
+                    thought: 'Search field revealed successfully',
+                    action: 'reveal_search_input',
+                    status: 'success',
+                });
+                return { opened: true, snapshot: refreshed };
+            }
+            snapshot = refreshed;
+        } catch (e) {
+            console.warn(`[AutonomousLoop] Search reveal attempt ${attempt} failed: ${e.message}`);
+        }
+    }
+
+    return { opened: false, snapshot };
 }
 
 function getDomain(url) {
@@ -409,16 +562,28 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
                     continue;
                 }
 
-                // Dismiss overlays if present
-                if (snapshot.overlays && snapshot.overlays.length > 0) {
-                    const dismissed = await tryDismissOverlay(page);
-                    if (dismissed) {
-                        try { snapshot = await getDOMSnapshot(page); } catch { /* keep old */ }
+                // Always attempt to clear interruptions before acting.
+                const dismissedBefore = await dismissInterruptions(page, 2);
+                if (dismissedBefore || (snapshot.overlays && snapshot.overlays.length > 0)) {
+                    try {
+                        snapshot = await getDOMSnapshot(page);
+                    } catch {
+                        // keep current snapshot
                     }
                 }
 
-                const screenshotForStepBuffer = await page.screenshot({ type: 'png' }).catch(() => null);
-                const screenshotForStep = normalizeScreenshotBase64(screenshotForStepBuffer);
+                // If this is a search TYPE step, reveal hidden search UI first.
+                if (isSearchTypeStep(currentStep)) {
+                    const reveal = await ensureSearchFieldOpen(page, currentStep, snapshot);
+                    snapshot = reveal.snapshot || snapshot;
+                }
+
+                // Capture a fresh grounded screenshot per attempt, not just during planning.
+                const groundedForStep = await captureMarkedScreenshot(page);
+                const screenshotForStep = groundedForStep.screenshot;
+                if (groundedForStep.groundingMap) {
+                    groundingMap = groundedForStep.groundingMap;
+                }
 
                 // Resolve plan step → concrete action
                 let action;
@@ -457,6 +622,18 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
                     if (e.name === 'AbortError') throw e;
                     console.warn(`[AutonomousLoop] Execute failed: ${e.message}`);
                     emitStep({ thought: `Action failed: ${e.message}`, action: actionLabel, status: 'fail' });
+
+                    // Search pages often need one extra "open search" action before TYPE.
+                    const isTypeFocusError =
+                        action.type === 'TYPE' &&
+                        /focus any input field|could not focus/i.test(e.message || '');
+                    if (isTypeFocusError && isSearchTypeStep(currentStep)) {
+                        const reveal = await ensureSearchFieldOpen(page, currentStep, snapshot);
+                        if (reveal.opened) {
+                            snapshot = reveal.snapshot || snapshot;
+                            continue; // retry same step without counting as a failed attempt
+                        }
+                    }
 
                     // Invalidate the cached selector so next retry uses heuristic/LLM
                     if (currentStep.goalText || currentStep.description) {
@@ -519,7 +696,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
 
                 // Handle overlays that appeared after action
                 if (verification.overlayAppeared) {
-                    await tryDismissOverlay(page);
+                    await dismissInterruptions(page, 2);
                 }
             }
 

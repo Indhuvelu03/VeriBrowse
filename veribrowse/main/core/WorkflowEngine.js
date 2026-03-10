@@ -197,9 +197,13 @@ class WorkflowEngine {
             bus.emit('agent:chat-response', { goal, response: `📍 Navigating to **${url}**…` });
 
             // Follow-up once navigation completes
+            let quickNavCompleted = false;
             const followUp = ({ stepId: sid, result }) => {
                 if (sid !== stepId) return;
+                if (quickNavCompleted) return;
+                quickNavCompleted = true;
                 bus.off('step-result', followUp);
+                clearTimeout(timeoutId);
                 const title = result?.result?.title || result?.title || '';
                 const finalUrl = result?.result?.url || url;
                 let siteName;
@@ -213,7 +217,9 @@ class WorkflowEngine {
             bus.on('step-result', followUp);
 
             // Safety: if no step-result within 8s, send the follow-up anyway
-            setTimeout(() => {
+            const timeoutId = setTimeout(() => {
+                if (quickNavCompleted) return;
+                quickNavCompleted = true;
                 bus.off('step-result', followUp);
                 let siteName;
                 try { siteName = new URL(url.startsWith('http') ? url : `https://${url}`).hostname.replace('www.', ''); } catch { siteName = url; }
@@ -295,8 +301,13 @@ class WorkflowEngine {
             .replace(/^(go to|open|visit|navigate to|take me to|show me)\s+/i, '')
             .trim();
 
-        if (cleaned.startsWith('http')) return cleaned;
-        if (cleaned.includes('.')) return `https://${cleaned}`;
+        const token = cleaned
+            .replace(/^[('"[\s]+/, '')
+            .replace(/[)\]"'\s]+$/, '')
+            .replace(/[.,!?;:]+$/g, '');
+
+        if (token.startsWith('http')) return token;
+        if (token.includes('.')) return `https://${token}`;
 
         const siteMap = {
             google: 'https://www.google.com',

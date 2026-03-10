@@ -77,6 +77,20 @@ const MULTI_STEP_PATTERN = /,?\s+(then|and then|after that|next|also|followed by
 const TASK_TAIL_PATTERN = /\b(find|get|search|compare|best|top|under|below|between|show|list|sort|review|rating|price|buy|select|choose)\b/i;
 const POLITE_TAIL_PATTERN = /^(please|pls|now|thanks|thank you|site|website)\b[\s.!?]*$/i;
 
+function sanitizeUrlToken(token) {
+    let t = String(token || '').trim();
+    if (!t) return '';
+
+    // Strip wrapping punctuation often produced by natural-language prompts.
+    t = t.replace(/^[('"[\s]+/, '');
+    t = t.replace(/[)\]"'\s]+$/, '');
+
+    // Strip sentence punctuation from the end of host-like tokens:
+    // "amazon.com." -> "amazon.com"
+    t = t.replace(/[.,!?;:]+$/g, '');
+    return t;
+}
+
 /**
  * Stage 1: Try to classify without an LLM call.
  * Returns a classification object or null if uncertain.
@@ -98,7 +112,7 @@ function heuristicClassify(input) {
 
     // 2. Direct URL (bare URL with no extra instructions)
     if (URL_PATTERN.test(trimmed) && !MULTI_STEP_PATTERN.test(trimmed)) {
-        const urlToken = trimmed.split(/[\s,]/)[0]; // grab only the URL token
+        const urlToken = sanitizeUrlToken(trimmed.split(/[\s,]/)[0]); // grab only the URL token
         return {
             intent_type: Intents.QUICK_ACTION,
             confidence_score: 0.99,
@@ -195,7 +209,7 @@ function resolveNavigationWithTail(sitePart) {
     if (!cleaned) return { url: null, remainder: '' };
 
     const parts = cleaned.split(' ');
-    const first = parts[0];
+    const first = sanitizeUrlToken(parts[0]);
     const firstTwo = parts.slice(0, 2).join(' ');
 
     let consumed = 0;
@@ -280,6 +294,7 @@ export async function dispatch(userInput, context = {}) {
 
         // For QUICK_ACTION with URL, resolve if needed
         if (classification.intent_type === Intents.QUICK_ACTION && classification.url) {
+            classification.url = sanitizeUrlToken(classification.url);
             if (!classification.url.startsWith('http')) {
                 classification.url = `https://${classification.url}`;
             }

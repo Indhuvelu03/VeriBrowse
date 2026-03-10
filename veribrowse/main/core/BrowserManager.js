@@ -28,6 +28,24 @@ async function getAttachStateSync() {
     return _attachStateSync;
 }
 
+const AD_BLOCK_PATTERNS = [
+    'doubleclick.net',
+    'googlesyndication.com',
+    'googleadservices.com',
+    'adservice.google.',
+    'adnxs.com',
+    'taboola.com',
+    'outbrain.com',
+    'zedo.com',
+    'criteo.com',
+    '/aclk?',
+];
+
+function isAdOrSponsoredRequest(url = '') {
+    const u = String(url || '').toLowerCase();
+    return AD_BLOCK_PATTERNS.some((p) => u.includes(p));
+}
+
 class BrowserManager {
     constructor() {
         /** @type {Map<string, { playwrightPage: import('playwright').Page, electronBrowserView?: WebContentsView, url: string, title: string, type: string }>} */
@@ -91,6 +109,32 @@ class BrowserManager {
             userAgent:
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         });
+
+        // Suppress ad/sponsored network noise globally for all tabs.
+        await this.context.route('**/*', async (route) => {
+            try {
+                const req = route.request();
+                const url = req.url();
+                const type = req.resourceType();
+                const nav = req.isNavigationRequest();
+                const blocked = isAdOrSponsoredRequest(url);
+
+                // Never block first-party document loads unless the target is a known ad redirect endpoint.
+                const isAdRedirectDoc = nav && (
+                    String(url).toLowerCase().includes('/aclk?') ||
+                    String(url).toLowerCase().includes('googleadservices.com')
+                );
+
+                if (blocked && (type !== 'document' || isAdRedirectDoc)) {
+                    await route.abort('blockedbyclient').catch(() => route.abort());
+                    return;
+                }
+            } catch {
+                // fall through to continue
+            }
+            await route.continue();
+        });
+        console.log('[BrowserManager] Network ad filter enabled');
 
         // Sync globals after context is ready
         global.playwrightBrowser = this.browser;

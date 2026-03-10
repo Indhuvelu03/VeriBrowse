@@ -42,6 +42,38 @@ function escAttrValue(value) {
         .trim();
 }
 
+function textBlob(...parts) {
+    return parts
+        .filter(Boolean)
+        .map(v => String(v).toLowerCase().trim())
+        .join(' ');
+}
+
+function isSearchGoal(goalText) {
+    const goal = String(goalText || '').toLowerCase();
+    return /\b(search|find|look up|lookup|query)\b/.test(goal);
+}
+
+function isSearchInput(input) {
+    const blob = textBlob(
+        input?.type,
+        input?.name,
+        input?.placeholder,
+        input?.ariaLabel,
+        input?.title,
+        input?.selector
+    );
+
+    if (!blob) return false;
+    if (/\bsearch\b/.test(blob)) return true;
+    if (/\bquery\b/.test(blob)) return true;
+    if (/\bfind\b/.test(blob)) return true;
+    // Common search param names.
+    if (/\bname=["']?q["']?\b/.test(blob)) return true;
+    if (/\[name=["']?q["']?\]/.test(blob)) return true;
+    return false;
+}
+
 function toSpecificInputSelector(el) {
     if (!el) return null;
 
@@ -160,12 +192,23 @@ function heuristicSearch(goalText, snapshot) {
             name: i.name || '',
             autocomplete: i.autocomplete || '',
             ariaLabel: i.ariaLabel || '',
+            title: i.title || '',
         })),
     ];
 
+    // If this is a search intent but the page does not expose a visible search input yet,
+    // let the caller reveal the search UI first (icon/menu click), then retry TYPE.
+    if (isSearchGoal(goalText) && !hasVisibleSearchInput(snapshot)) {
+        return null;
+    }
+
+    function elementText(el) {
+        return textBlob(el?.text, el?.ariaLabel, el?.title);
+    }
+
     // Strategy 1: Exact text match
     for (const el of allElements) {
-        const elText = (el.text || '').toLowerCase().trim();
+        const elText = elementText(el);
         if (elText === goal && el.visible !== false) {
             const selector = el._source === 'input' ? toSpecificInputSelector(el) : el.selector;
             console.log(`[LocalSelector] Heuristic: exact text match → "${selector}"`);
@@ -175,7 +218,7 @@ function heuristicSearch(goalText, snapshot) {
 
     // Strategy 2: Partial text match (case-insensitive contains)
     for (const el of allElements) {
-        const elText = (el.text || '').toLowerCase().trim();
+        const elText = elementText(el);
         if (elText && elText.includes(goal) && el.visible !== false) {
             const selector = el._source === 'input' ? toSpecificInputSelector(el) : el.selector;
             console.log(`[LocalSelector] Heuristic: partial text match → "${selector}"`);
@@ -185,7 +228,7 @@ function heuristicSearch(goalText, snapshot) {
 
     // Strategy 2b: Goal contains element text (e.g., goal="click the Sign In button", el.text="Sign In")
     for (const el of allElements) {
-        const elText = (el.text || '').toLowerCase().trim();
+        const elText = elementText(el);
         if (elText && elText.length > 2 && goal.includes(elText) && el.visible !== false) {
             const selector = el._source === 'input' ? toSpecificInputSelector(el) : el.selector;
             console.log(`[LocalSelector] Heuristic: reverse partial match → "${selector}"`);
@@ -195,8 +238,8 @@ function heuristicSearch(goalText, snapshot) {
 
     // Strategy 3: Placeholder/aria-label match (for inputs)
     for (const el of snapshot.inputs || []) {
-        const placeholder = (el.placeholder || '').toLowerCase();
-        if (placeholder && (placeholder.includes(goal) || goal.includes(placeholder)) && el.visible !== false) {
+        const inputBlob = textBlob(el.placeholder, el.ariaLabel, el.title, el.name, el.type);
+        if (inputBlob && (inputBlob.includes(goal) || goal.includes(inputBlob)) && el.visible !== false) {
             const selector = toSpecificInputSelector(el);
             console.log(`[LocalSelector] Heuristic: placeholder match → "${selector}"`);
             return { selector, fallbackText: null, method: 'placeholder' };
@@ -244,7 +287,7 @@ function heuristicSearch(goalText, snapshot) {
         let bestScore = 0;
 
         for (const el of allElements) {
-            const elText = (el.text || '').toLowerCase();
+            const elText = elementText(el);
             if (!elText || el.visible === false) continue;
             const matchCount = goalWords.filter(w => elText.includes(w)).length;
             const score = matchCount / goalWords.length;
@@ -313,6 +356,61 @@ export async function resolve(goalText, snapshot, screenshot = null) {
     // Save LLM result to cache so we never ask again for the same goal
     saveToCache(domain, goalText, llmResult.selector, llmResult.fallbackText);
     return llmResult;
+}
+
+/**
+ * Returns true if the current page has at least one visible search input.
+ */
+export function hasVisibleSearchInput(snapshot) {
+    return (snapshot?.inputs || []).some((input) => input?.visible !== false && isSearchInput(input));
+}
+
+/**
+ * Find the best visible trigger that opens a hidden search UI
+ * (search icon, search menu entry, etc.).
+ *
+ * @returns {{ selector: string, fallbackText: string|null, method: string } | null}
+ */
+export function resolveSearchTrigger(snapshot) {
+    if (!snapshot) return null;
+
+    const triggerPool = [
+        ...(snapshot.buttons || []).map((e) => ({ ...e, _kind: 'button' })),
+        ...(snapshot.interactiveElements || []).map((e) => ({ ...e, _kind: 'interactive' })),
+        ...(snapshot.links || []).map((e) => ({ ...e, _kind: 'link' })),
+    ].filter((e) => e && e.visible !== false);
+
+    let best = null;
+    let bestScore = 0;
+
+    for (const el of triggerPool) {
+        const blob = textBlob(el.text, el.ariaLabel, el.title, el.selector, el.role, el.tag);
+        if (!blob) continue;
+
+        let score = 0;
+        if (/\bsearch\b/.test(blob)) score += 8;
+        if (/\bfind\b/.test(blob)) score += 4;
+        if (/\bmagnif|loupe|searchbox\b/.test(blob)) score += 3;
+        if (/\bopen\b/.test(blob) && /\bsearch\b/.test(blob)) score += 2;
+        if (el._kind === 'button') score += 1;
+        if (el._kind === 'interactive' && /\bbutton\b/.test(blob)) score += 1;
+
+        // Avoid selecting explicit "advanced search" as primary reveal action.
+        if (/\badvanced\b/.test(blob) && /\bsearch\b/.test(blob)) score -= 2;
+
+        if (score > bestScore) {
+            bestScore = score;
+            best = el;
+        }
+    }
+
+    if (!best || bestScore < 5) return null;
+
+    return {
+        selector: best.selector,
+        fallbackText: best.text || best.ariaLabel || best.title || 'search',
+        method: 'search-trigger',
+    };
 }
 
 /**

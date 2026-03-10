@@ -199,7 +199,11 @@ async function _handleHover(page, descriptor) {
 async function _handleNavigate(page, descriptor) {
     if (!descriptor.url) throw new Error('[InteractionEngine] navigate: url required');
 
-    let url = descriptor.url.trim();
+    let url = String(descriptor.url)
+        .trim()
+        .replace(/^[('"[\s]+/, '')
+        .replace(/[)\]"'\s]+$/, '')
+        .replace(/[.,!?;:]+$/g, '');
     if (!url.startsWith('http')) url = `https://${url}`;
 
     try {
