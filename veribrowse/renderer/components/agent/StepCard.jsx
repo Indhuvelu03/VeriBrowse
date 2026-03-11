@@ -20,7 +20,7 @@ const ACTION_META = {
     EXTRACT: { icon: ScanText, label: 'Reading page', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
     SEARCH: { icon: Search, label: 'Searching', color: 'text-sky-400', bg: 'bg-sky-500/10' },
     PLAN: { icon: Brain, label: 'Planning', color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
-    SKILL_HIT: { icon: Zap, label: 'Skill match', color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
+    // SKILL_HIT: { icon: Zap, label: 'Skill match', color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
     REPLAN: { icon: RefreshCw, label: 'Adjusting plan', color: 'text-amber-400', bg: 'bg-amber-500/10' },
     DONE: { icon: CheckCheck, label: 'Completed', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
     VERIFY: { icon: Eye, label: 'Verifying', color: 'text-teal-400', bg: 'bg-teal-500/10' },

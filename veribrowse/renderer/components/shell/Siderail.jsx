@@ -21,7 +21,7 @@ export default function Siderail() {
     const navItems = [
         { id: 'home', icon: Home, label: 'Home', action: () => { setCurrentPage('home'); setActiveView('home'); } },
         { id: 'agent', icon: Bot, label: 'Agent', action: () => toggleAgentPanel() },
-        { id: 'skills', icon: Sparkles, label: 'Skills', action: () => currentPage === 'skills' ? closeOverlays() : setCurrentPage('skills') },
+        // { id: 'skills', icon: Sparkles, label: 'Skills', action: () => currentPage === 'skills' ? closeOverlays() : setCurrentPage('skills') },
         { id: 'history', icon: History, label: 'History', action: () => currentPage === 'history' ? closeOverlays() : setCurrentPage('history') },
         { id: 'downloads', icon: Download, label: 'Downloads', action: () => currentPage === 'downloads' ? closeOverlays() : setCurrentPage('downloads') },
     ];

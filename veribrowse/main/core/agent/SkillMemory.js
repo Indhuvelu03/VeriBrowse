@@ -109,6 +109,7 @@ export function deriveSkillName(goal) {
  * @returns {Promise<object[]|null>} Array of step objects, or null if no skill found
  */
 export async function recall(domain, goal) {
+    /*
     const key = lruKey(domain, goal);
 
     // Tier 1: LRU in-memory
@@ -132,6 +133,7 @@ export async function recall(domain, goal) {
     }
 
     console.log(`[SkillMemory] MISS for "${goal}" on ${domain}`);
+    */
     return null;
 }
 
@@ -143,6 +145,7 @@ export async function recall(domain, goal) {
  * @param {object[]} steps - The executed steps (with selectors, goalText, etc.)
  */
 export async function save(domain, goal, steps) {
+    /*
     if (!steps || steps.length === 0) return;
 
     const skillName = deriveSkillName(goal);
@@ -169,6 +172,7 @@ export async function save(domain, goal, steps) {
     } catch (e) {
         console.warn('[SkillMemory] Supabase save failed (LRU still cached):', e.message);
     }
+    */
 }
 
 /**

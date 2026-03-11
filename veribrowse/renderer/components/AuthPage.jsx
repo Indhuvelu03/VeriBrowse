@@ -12,9 +12,12 @@ import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Logo } from './Logo';
 import { useAuthStore } from '../store/authStore';
+import { useUIStore } from '../store/uiStore';
+import { Settings } from 'lucide-react';
 
 export default function AuthPage() {
-    const { signIn, signUp, resetPassword, error, setError } = useAuthStore();
+    const { signIn, signUp, resetPassword, error, setError, isConfigured } = useAuthStore();
+    const { setCurrentPage } = useUIStore();
 
     const [mode, setMode] = useState('signin'); // 'signin' | 'signup' | 'forgot'
     const [email, setEmail] = useState('');
@@ -263,6 +266,34 @@ export default function AuthPage() {
                             )}
                         </AnimatePresence>
 
+                        {/* Configuration warning if Supabase is not set up */}
+                        {!isConfigured && (
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.95 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 space-y-3"
+                            >
+                                <div className="flex items-start gap-3">
+                                    <div className="mt-0.5 p-1.5 bg-amber-500/10 rounded-lg">
+                                        <Settings size={14} className="text-amber-500" />
+                                    </div>
+                                    <div>
+                                        <p className="text-[11px] font-bold text-amber-500 uppercase tracking-wider">Configuration Required</p>
+                                        <p className="text-[10px] text-amber-200/60 leading-relaxed mt-0.5">
+                                            Supabase credentials are not set. You won't be able to sign in, but you can still continue as a guest.
+                                        </p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setCurrentPage('settings')}
+                                    className="w-full py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded-lg text-[10px] font-bold text-amber-400 uppercase tracking-widest transition-all"
+                                >
+                                    Setup Supabase Now
+                                </button>
+                            </motion.div>
+                        )}
+
                         {/* Error message */}
                         <AnimatePresence>
                             {error && (
@@ -351,17 +382,32 @@ export default function AuthPage() {
                             </button>
                         </p>
                     ) : (
-                        <p className="mt-6 text-center text-xs text-gray-500">
-                            {mode === 'signin'
-                                ? "Don't have an account? "
-                                : 'Already have an account? '}
+                        <div className="mt-6 flex flex-col gap-4 text-center">
+                            <p className="text-xs text-gray-500">
+                                {mode === 'signin'
+                                    ? "Don't have an account? "
+                                    : 'Already have an account? '}
+                                <button
+                                    onClick={toggleMode}
+                                    className="text-white hover:text-gray-300 transition-colors font-semibold"
+                                >
+                                    {mode === 'signin' ? 'Sign Up' : 'Sign In'}
+                                </button>
+                            </p>
+
+                            <div className="relative flex items-center gap-4 px-4">
+                                <div className="h-px flex-1 bg-white/5" />
+                                <span className="text-[10px] text-gray-600 font-bold uppercase tracking-widest">or</span>
+                                <div className="h-px flex-1 bg-white/5" />
+                            </div>
+
                             <button
-                                onClick={toggleMode}
-                                className="text-white hover:text-gray-300 transition-colors font-semibold"
+                                onClick={() => useAuthStore.getState().continueAsGuest()}
+                                className="w-full py-3 rounded-xl text-[11px] font-bold text-gray-400 border border-white/5 hover:bg-white/5 hover:text-white transition-all uppercase tracking-widest"
                             >
-                                {mode === 'signin' ? 'Sign Up' : 'Sign In'}
+                                Continue without an account
                             </button>
-                        </p>
+                        </div>
                     )}
                 </div>
 

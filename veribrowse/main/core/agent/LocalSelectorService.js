@@ -431,6 +431,7 @@ export function invalidate(goalText, url) {
  * Called when a skill match is found to avoid any LLM calls.
  */
 export function seedFromSkill(domain, steps) {
+    /*
     if (!Array.isArray(steps)) return;
     for (const step of steps) {
         if (step.goalText && step.selector) {
@@ -438,6 +439,7 @@ export function seedFromSkill(domain, steps) {
         }
     }
     console.log(`[LocalSelector] Seeded ${steps.length} selectors from skill memory for ${domain}`);
+    */
 }
 
 /**

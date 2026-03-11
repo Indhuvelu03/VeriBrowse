@@ -11,7 +11,7 @@ import { useUIStore } from '../../store/uiStore';
 export default function HomePage() {
     const [inputValue, setInputValue] = useState('');
     const { startWorkflow } = useWorkflowStore();
-    const { setActiveView } = useUIStore();
+    const { setActiveView, openAgentPanel, agentPanelOpen } = useUIStore();
     const { createNewTab } = useTabStore();
 
     const handleSearch = (e) => {
@@ -25,12 +25,12 @@ export default function HomePage() {
             setActiveView('browser');
         } else {
             startWorkflow(query);
-            // uiStore action to open panel
+            openAgentPanel();
         }
     };
 
     return (
-        <div className="flex-1 flex flex-col items-center justify-center bg-obsidian relative overflow-hidden h-full w-full">
+        <div className={`flex-1 flex flex-col items-center justify-center bg-obsidian relative overflow-hidden h-full w-full transition-all duration-300 ${agentPanelOpen ? 'pr-[420px]' : ''}`}>
             {/* Ambient Background Glows */}
             <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-blue-500/5 blur-[120px] rounded-full pointer-events-none" />
             <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-purple-500/5 blur-[120px] rounded-full pointer-events-none" />

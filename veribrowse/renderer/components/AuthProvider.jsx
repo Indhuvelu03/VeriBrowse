@@ -16,39 +16,28 @@ import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../store/authStore';
 
 export default function AuthProvider({ children }) {
+    const initialize = useAuthStore((s) => s.initialize);
+    const isConfigured = useAuthStore((s) => s.isConfigured);
     const setUser = useAuthStore((s) => s.setUser);
-    const setLoading = useAuthStore((s) => s.setLoading);
 
     useEffect(() => {
-        // 1. Get existing session (works even if persisted across restarts)
-        const checkSession = async () => {
-            try {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
+        // 1. Initialize from electron-store (loads session internally)
+        initialize();
+
+        // 2. Listen for auth state changes if configured
+        let subscription;
+        if (isConfigured) {
+            const res = supabase.auth.onAuthStateChange((_event, session) => {
                 setUser(session?.user ?? null);
-            } catch (err) {
-                console.error('[AuthProvider] session check failed:', err);
-                setUser(null);
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        checkSession();
-
-        // 2. Listen for auth state changes
-        const {
-            data: { subscription },
-        } = supabase.auth.onAuthStateChange((_event, session) => {
-            setUser(session?.user ?? null);
-        });
+            });
+            subscription = res.data.subscription;
+        }
 
         // Cleanup on unmount
         return () => {
             subscription?.unsubscribe();
         };
-    }, [setUser, setLoading]);
+    }, [initialize, isConfigured, setUser]);
 
     return <>{children}</>;
 }

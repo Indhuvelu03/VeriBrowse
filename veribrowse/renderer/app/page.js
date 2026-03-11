@@ -25,7 +25,7 @@ import HomePage from '../components/pages/HomePage';
 import HistoryPage from '../components/pages/HistoryPage';
 import DownloadsPage from '../components/pages/DownloadsPage';
 import SettingsPage from '../components/pages/SettingsPage';
-import SkillLibraryPage from '../components/pages/SkillLibraryPage';
+// import SkillLibraryPage from '../components/pages/SkillLibraryPage';
 
 // Utilities
 import ToastNotifications from '../components/ToastNotifications';
@@ -47,6 +47,7 @@ import { Logo } from '../components/Logo';
  * ──────────────────────────────────────────────────────────────────── */
 function AuthGate({ children }) {
     const { user, loading } = useAuthStore();
+    const { currentPage } = useUIStore();
 
     // ── 1. Loading / Splash ──────────────────────────────────────────
     if (loading) {
@@ -100,12 +101,21 @@ function AuthGate({ children }) {
         );
     }
 
-    // ── 2. Not authenticated ─────────────────────────────────────────
+    /* 
+     * ── 2. Settings Bypass ──────────────────────────────────────────
+     * If the user is at the AuthPage but tries to open settings,
+     * allow the children to render so the SettingsPage overlay can show.
+     */
+    if (currentPage === 'settings') {
+        return <>{children}</>;
+    }
+
+    // ── 3. Not authenticated ─────────────────────────────────────────
     if (!user) {
         return <AuthPage />;
     }
 
-    // ── 3. Authenticated → render the existing browser UI ────────────
+    // ── 4. Authenticated → render the existing browser UI ────────────
     return <>{children}</>;
 }
 
@@ -171,7 +181,7 @@ export default function MainLayout() {
                                     {currentPage === 'history' && <HistoryPage key="history" />}
                                     {currentPage === 'downloads' && <DownloadsPage key="downloads" />}
                                     {currentPage === 'settings' && <SettingsPage key="settings" />}
-                                    {currentPage === 'skills' && <SkillLibraryPage key="skills" />}
+                                    {/* {currentPage === 'skills' && <SkillLibraryPage key="skills" />} */}
                                 </AnimatePresence>
                             </div>
 

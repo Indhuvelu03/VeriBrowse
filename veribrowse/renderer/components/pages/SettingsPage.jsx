@@ -58,6 +58,10 @@ export default function SettingsPage() {
         window.electronAPI.settings.set('geminiApiKey', keys.geminiApiKey);
         window.electronAPI.settings.set('supabaseUrl', keys.supabaseUrl);
         window.electronAPI.settings.set('supabaseAnonKey', keys.supabaseAnonKey);
+
+        // Re-initialize auth store (which re-inits supabase client)
+        useAuthStore.getState().initialize();
+
         addToast('Settings saved successfully ✓', 'success');
         closeOverlays();
     };
@@ -162,25 +166,57 @@ export default function SettingsPage() {
                     </button>
                 </div>
 
-                {/* Account & Sign Out */}
+                {/* Account & User Profile */}
                 <section className="space-y-6 pt-4 border-t border-white/5">
                     <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center">
                             <User size={16} className="text-red-400" />
                         </div>
-                        <h3 className="text-xs font-bold text-white uppercase tracking-[0.2em]">Account</h3>
+                        <h3 className="text-xs font-bold text-white uppercase tracking-[0.2em]">User Profile</h3>
                     </div>
 
-                    <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl space-y-4">
-                        {user?.email && (
-                            <div className="flex items-center gap-3">
-                                <div className="w-9 h-9 rounded-full bg-aurora/10 flex items-center justify-center">
-                                    <span className="text-sm font-bold text-aurora">{user.email[0].toUpperCase()}</span>
+                    <div className="bg-white/[0.02] border border-white/5 p-6 rounded-2xl space-y-6">
+                        {user ? (
+                            <>
+                                <div className="flex items-center gap-4">
+                                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-white/10 to-white/5 border border-white/10 flex items-center justify-center">
+                                        <span className="text-lg font-bold text-white">
+                                            {user.email === 'Guest User' ? 'G' : user.email[0].toUpperCase()}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-white font-medium">{user.email}</p>
+                                        <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-0.5">
+                                            {user.isGuest ? 'Bypassed Account (Guest)' : 'Verified Account'}
+                                        </p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <p className="text-sm text-white font-medium">{user.email}</p>
-                                    <p className="text-[10px] text-gray-500 uppercase tracking-wider">Signed In</p>
-                                </div>
+
+                                {!user.isGuest && (
+                                    <div className="space-y-2 pt-2">
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pl-1">Display Name</label>
+                                        <input
+                                            type="text"
+                                            defaultValue={user.user_metadata?.full_name || ''}
+                                            placeholder="Set your display name..."
+                                            className="w-full h-11 bg-black/40 border border-white/5 rounded-xl px-4 text-sm text-white focus:outline-none focus:border-white/20 transition-all"
+                                            onBlur={async (e) => {
+                                                const newName = e.target.value;
+                                                if (newName && newName !== user.user_metadata?.full_name) {
+                                                    const { error } = await supabase.auth.updateUser({
+                                                        data: { full_name: newName }
+                                                    });
+                                                    if (error) addToast(error.message, 'error');
+                                                    else addToast('Profile updated', 'success');
+                                                }
+                                            }}
+                                        />
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <div className="text-center py-4">
+                                <p className="text-xs text-gray-500 italic">Not signed in</p>
                             </div>
                         )}
 
@@ -188,7 +224,7 @@ export default function SettingsPage() {
                             onClick={signOut}
                             className="w-full h-12 bg-red-500/10 border border-red-500/20 text-red-400 font-semibold rounded-xl flex items-center justify-center gap-2 hover:bg-red-500/20 hover:border-red-500/30 active:scale-[0.98] transition-all text-sm"
                         >
-                            <LogOut size={16} /> Sign Out
+                            <LogOut size={16} /> {user?.isGuest ? 'Exit Guest Mode' : 'Sign Out'}
                         </button>
                     </div>
                 </section>
