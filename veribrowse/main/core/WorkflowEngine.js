@@ -7,6 +7,7 @@ import { Intents } from './IntentDispatcher.js';
 import * as AgentRuntime from './agent/AgentRuntime.js';
 import UIFeedback from './UIFeedback.js';
 import browserManager from './BrowserManager.js';
+import { parsePriceComparisonGoal, runParallelPriceComparison } from './compare/PriceComparisonOrchestrator.js';
 import { REFINE_PROMPT } from '../constants.js';
 
 /**
@@ -243,8 +244,14 @@ class WorkflowEngine {
      * Uses AgentRuntime which orchestrates AutonomousLoop (plan-once, execute-locally).
      * This is the Z-Axis shadow workspace — execution happens in background.
      */
-    async _handleLongHorizon(goal, classification) {
+    async _handleLongHorizon(goal, _classification) {
         UIFeedback.emit('PLANNING');
+
+        const parsedComparison = parsePriceComparisonGoal(goal);
+        if (parsedComparison) {
+            console.log('[WorkflowEngine] Routing to parallel price comparison orchestrator.');
+            return this._handleParallelPriceComparison(goal, parsedComparison);
+        }
 
         const page = browserManager.getActivePage();
         if (!page) {
@@ -271,8 +278,14 @@ class WorkflowEngine {
      * page data to produce a structured, readable answer in the chat panel.
      * Best for: "find the best X", "compare Y and Z", "research topic T".
      */
-    async _handleDeep(goal, classification) {
+    async _handleDeep(goal, _classification) {
         UIFeedback.emit('PLANNING');
+
+        const parsedComparison = parsePriceComparisonGoal(goal);
+        if (parsedComparison) {
+            console.log('[WorkflowEngine] DEEP mode + comparison task — using parallel price comparison orchestrator.');
+            return this._handleParallelPriceComparison(goal, parsedComparison);
+        }
 
         const page = browserManager.getActivePage();
         if (!page) {
@@ -288,6 +301,40 @@ class WorkflowEngine {
             }
         } catch (err) {
             console.error('[WorkflowEngine] Deep runtime failed:', err.message);
+            bus.emit('agent:error', { error: err.message });
+            UIFeedback.emit('FAILED', err.message);
+        }
+    }
+
+    /**
+     * MULTI_SITE_PRICE_COMPARISON:
+     * Dedicated parallel branch runner (one tab per site), then unified chat report.
+     * This path is isolated from AgentRuntime to avoid altering existing autonomous flows.
+     */
+    async _handleParallelPriceComparison(goal, parsedComparison) {
+        try {
+            if (!browserManager.context) {
+                bus.emit('agent:error', { error: 'Browser is not initialized yet. Please retry in a moment.' });
+                UIFeedback.emit('FAILED', 'Browser not initialized');
+                return;
+            }
+
+            const outcome = await runParallelPriceComparison(goal, parsedComparison);
+            if (!outcome?.handled) {
+                console.warn('[WorkflowEngine] Comparison orchestrator did not handle goal, falling back to autonomous runtime.');
+                const page = browserManager.getActivePage();
+                if (!page) {
+                    bus.emit('agent:error', { error: 'No browser tab available. Open a tab first.' });
+                    UIFeedback.emit('FAILED', 'No browser tab');
+                    return;
+                }
+                const { success, result } = await AgentRuntime.start(page, goal);
+                if (!success) {
+                    bus.emit('agent:error', { error: result?.error || 'Autonomous task failed' });
+                }
+            }
+        } catch (err) {
+            console.error('[WorkflowEngine] Parallel comparison failed:', err.message);
             bus.emit('agent:error', { error: err.message });
             UIFeedback.emit('FAILED', err.message);
         }

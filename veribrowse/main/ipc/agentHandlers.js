@@ -3,6 +3,7 @@ import bus from '../core/EventBus.js';
 import * as AgentRuntime from '../core/agent/AgentRuntime.js';
 import browserManager from '../core/BrowserManager.js';
 import * as IPCGuard from '../core/IPCGuard.js';
+import { cancelActivePriceComparison } from '../core/compare/PriceComparisonOrchestrator.js';
 import { generate } from '../services/LLMService.js';
 
 /**
@@ -88,6 +89,7 @@ export function registerAgentHandlers() {
     // Force-release so the user can immediately re-submit after cancelling.
     ipcMain.on('agent:cancel-autonomous', () => {
         AgentRuntime.cancel();
+        cancelActivePriceComparison();
         IPCGuard.forceRelease('agent:cancel-autonomous');
     });
 

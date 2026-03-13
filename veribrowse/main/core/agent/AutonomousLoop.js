@@ -46,6 +46,8 @@ const MAX_STEP_RETRIES = 3;    // retries per step before replan
 const MAX_REPLAN_ATTEMPTS = 2;    // max times we ask the LLM to replan
 const MAX_TOTAL_ACTIONS = 20;   // absolute safety ceiling
 const SEARCH_REVEAL_ATTEMPTS = 2;
+const SEARCH_INTENT_PATTERN = /\b(search|find|query|look up|lookup)\b/i;
+const INTERRUPTION_TEXT_PATTERN = /\b(cookie|consent|gdpr|privacy|subscribe|subscription|newsletter|sign\s*in|log\s*in|login|sign\s*up|register|notification|advert|sponsored|promo|interstitial)\b/i;
 
 // Common overlay / modal dismiss selectors
 const OVERLAY_DISMISS_SELECTORS = [
@@ -56,15 +58,14 @@ const OVERLAY_DISMISS_SELECTORS = [
     "div[role='dialog'] button:has-text('Continue without')",
     "div[role='dialog'] button:has-text('Skip')",
     "div[role='dialog'] button:has-text('Maybe later')",
-    "button[aria-label*='close' i]",
-    "button[aria-label*='dismiss' i]",
-    "button[aria-label*='cancel' i]",
-    "button[aria-label='Close']",
-    "button[aria-label='Dismiss']",
-    ".modal button.close",
-    ".popup button.close",
-    "[data-testid*='close']",
-    "[class*='close']",
+    "[role='dialog'] button[aria-label*='close' i]",
+    "[role='dialog'] button[aria-label*='dismiss' i]",
+    "[role='dialog'] button[aria-label*='cancel' i]",
+    "[aria-modal='true'] button[aria-label*='close' i]",
+    "[aria-modal='true'] button[aria-label*='dismiss' i]",
+    "[aria-modal='true'] button[aria-label*='cancel' i]",
+    ".modal button[aria-label*='close' i]",
+    ".popup button[aria-label*='close' i]",
     "button:has-text('Accept')",
     "button:has-text('Got it')",
     "button:has-text('OK')",
@@ -94,11 +95,93 @@ function checkAbort(signal) {
     }
 }
 
-async function tryDismissOverlay(page) {
+function isSearchRelatedStep(step) {
+    if (!step) return false;
+    const blob = `${step.goalText || ''} ${step.description || ''} ${step.selector || ''} ${step.text || ''}`.toLowerCase();
+    return SEARCH_INTENT_PATTERN.test(blob);
+}
+
+function shouldPreserveSearchUI(step, snapshot) {
+    if (isSearchRelatedStep(step)) return true;
+    if (LocalSelector.hasVisibleSearchInput(snapshot)) return true;
+
+    return (snapshot?.overlays || []).some((overlay) => {
+        const text = String(overlay?.text || '').toLowerCase();
+        if (!text) return false;
+        return SEARCH_INTENT_PATTERN.test(text) && !INTERRUPTION_TEXT_PATTERN.test(text);
+    });
+}
+
+async function shouldSkipDismissButtonForSearch(btn) {
+    try {
+        return await btn.evaluate((el) => {
+            function tr(s) { return s ? s.replace(/^\s+|\s+$/g, '') : ''; }
+            function lower(s) { return tr(s || '').toLowerCase(); }
+            function toNum(v, fallback) {
+                var n = +(v == null ? '' : v);
+                return n === n ? n : fallback;
+            }
+            function visible(node) {
+                if (!node) return false;
+                var rect = node.getBoundingClientRect();
+                if (!rect || rect.width < 2 || rect.height < 2) return false;
+                var st = window.getComputedStyle(node);
+                if (!st) return false;
+                if (st.display === 'none' || st.visibility === 'hidden') return false;
+                if (toNum(st.opacity || '1', 1) < 0.05) return false;
+                return true;
+            }
+            function isSearchField(node) {
+                if (!node) return false;
+                var blob = lower(
+                    (node.getAttribute('type') || '') + ' ' +
+                    (node.getAttribute('name') || '') + ' ' +
+                    (node.getAttribute('placeholder') || '') + ' ' +
+                    (node.getAttribute('aria-label') || '') + ' ' +
+                    (node.getAttribute('title') || '') + ' ' +
+                    (node.getAttribute('role') || '')
+                );
+                return /search|find|query/.test(blob);
+            }
+
+            var container =
+                el.closest('[role="dialog"], [aria-modal="true"], .modal, .popup, .overlay, [class*="modal"], [class*="overlay"], aside, [class*="drawer"], [class*="panel"]') ||
+                el.parentElement ||
+                document.body;
+
+            var fields = container.querySelectorAll('input, textarea, [role="searchbox"]');
+            for (var i = 0; i < fields.length; i++) {
+                var field = fields[i];
+                if (visible(field) && isSearchField(field)) {
+                    return true;
+                }
+            }
+
+            var containerBlob = lower(
+                (container.innerText || '') + ' ' +
+                (container.getAttribute('aria-label') || '') + ' ' +
+                (container.getAttribute('title') || '') + ' ' +
+                (container.id || '') + ' ' +
+                (typeof container.className === 'string' ? container.className : '')
+            );
+            var looksSearch = /\b(search|find|query|searchbox)\b/.test(containerBlob);
+            var looksInterrupting = /\b(cookie|consent|gdpr|privacy|subscribe|newsletter|sign\s*in|log\s*in|login|sign\s*up|register|notification|advert|sponsored|promo)\b/.test(containerBlob);
+
+            return looksSearch && !looksInterrupting;
+        });
+    } catch {
+        return false;
+    }
+}
+
+async function tryDismissOverlay(page, { preserveSearchUI = false } = {}) {
     for (const sel of OVERLAY_DISMISS_SELECTORS) {
         try {
             const btn = page.locator(sel).first();
             if (await btn.isVisible({ timeout: 300 })) {
+                if (preserveSearchUI && await shouldSkipDismissButtonForSearch(btn)) {
+                    continue;
+                }
                 await btn.click({ timeout: 2000 });
                 await page.waitForTimeout(400);
                 console.log(`[AutonomousLoop] Dismissed overlay: ${sel}`);
@@ -110,9 +193,9 @@ async function tryDismissOverlay(page) {
     return false;
 }
 
-async function tryDismissOverlayWithJS(page) {
+async function tryDismissOverlayWithJS(page, { preserveSearchUI = false } = {}) {
     try {
-        const clicked = await page.evaluate(() => {
+        const clicked = await page.evaluate((preserveSearchUI) => {
             function tr(s) { return s ? s.replace(/^\s+|\s+$/g, '') : ''; }
             function lower(s) { return tr(s).toLowerCase(); }
             function toNum(v, fallback) {
@@ -131,6 +214,30 @@ async function tryDismissOverlayWithJS(page) {
                 return true;
             }
 
+            function isSearchField(node) {
+                if (!node) return false;
+                const blob = lower(
+                    (node.getAttribute('type') || '') + ' ' +
+                    (node.getAttribute('name') || '') + ' ' +
+                    (node.getAttribute('placeholder') || '') + ' ' +
+                    (node.getAttribute('aria-label') || '') + ' ' +
+                    (node.getAttribute('title') || '') + ' ' +
+                    (node.getAttribute('role') || '')
+                );
+                return /search|find|query/.test(blob);
+            }
+
+            function isSearchLikeDialog(dialog, dialogBlob) {
+                const fields = dialog.querySelectorAll('input, textarea, [role="searchbox"]');
+                for (let i = 0; i < fields.length; i++) {
+                    const field = fields[i];
+                    if (visible(field) && isSearchField(field)) {
+                        return true;
+                    }
+                }
+                return /\b(search|find|query|searchbox)\b/.test(dialogBlob);
+            }
+
             const dialogs = document.querySelectorAll(
                 '[role="dialog"], [aria-modal="true"], .modal, .popup, .overlay, [class*="modal"], [class*="overlay"]'
             );
@@ -138,6 +245,19 @@ async function tryDismissOverlayWithJS(page) {
             for (let i = 0; i < dialogs.length; i++) {
                 const dialog = dialogs[i];
                 if (!visible(dialog)) continue;
+                const dialogBlob = lower(
+                    (dialog.innerText || '') + ' ' +
+                    (dialog.getAttribute('aria-label') || '') + ' ' +
+                    (dialog.getAttribute('title') || '') + ' ' +
+                    (dialog.id || '') + ' ' +
+                    (typeof dialog.className === 'string' ? dialog.className : '')
+                );
+                const looksSearch = isSearchLikeDialog(dialog, dialogBlob);
+                const looksInterrupting = /\b(cookie|consent|gdpr|privacy|subscribe|subscription|newsletter|sign\s*in|log\s*in|login|sign\s*up|register|notification|advert|sponsored|promo|interstitial)\b/.test(dialogBlob);
+                if (preserveSearchUI && looksSearch && !looksInterrupting) {
+                    continue;
+                }
+
                 const candidates = dialog.querySelectorAll('button, [role="button"], [aria-label]');
                 for (let j = 0; j < candidates.length; j++) {
                     const el = candidates[j];
@@ -164,7 +284,7 @@ async function tryDismissOverlayWithJS(page) {
                 }
             }
             return false;
-        });
+        }, preserveSearchUI);
 
         if (clicked) {
             await page.waitForTimeout(350);
@@ -177,24 +297,28 @@ async function tryDismissOverlayWithJS(page) {
     return false;
 }
 
-async function dismissInterruptions(page, maxPasses = 2) {
+async function dismissInterruptions(page, snapshot = null, currentStep = null, maxPasses = 2) {
     let dismissedAny = false;
+    const preserveSearchUI = shouldPreserveSearchUI(currentStep, snapshot);
     for (let i = 0; i < maxPasses; i++) {
         let dismissedThisPass = false;
 
-        if (await tryDismissOverlay(page)) {
+        if (await tryDismissOverlay(page, { preserveSearchUI })) {
             dismissedThisPass = true;
         }
-        if (await tryDismissOverlayWithJS(page)) {
+        if (await tryDismissOverlayWithJS(page, { preserveSearchUI })) {
             dismissedThisPass = true;
         }
 
         // Many sites bind ESC to close consent/login modals.
-        try {
-            await page.keyboard.press('Escape');
-            await page.waitForTimeout(100);
-        } catch {
-            // no-op
+        // Avoid this when a functional search panel is open.
+        if (!preserveSearchUI) {
+            try {
+                await page.keyboard.press('Escape');
+                await page.waitForTimeout(100);
+            } catch {
+                // no-op
+            }
         }
 
         dismissedAny = dismissedAny || dismissedThisPass;
@@ -205,8 +329,7 @@ async function dismissInterruptions(page, maxPasses = 2) {
 
 function isSearchTypeStep(step) {
     if (!step || step.type !== 'TYPE') return false;
-    const blob = `${step.goalText || ''} ${step.description || ''}`.toLowerCase();
-    return /\b(search|find|query|look up|lookup)\b/.test(blob);
+    return isSearchRelatedStep(step);
 }
 
 async function ensureSearchFieldOpen(page, step, snapshot) {
@@ -563,7 +686,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
                 }
 
                 // Always attempt to clear interruptions before acting.
-                const dismissedBefore = await dismissInterruptions(page, 2);
+                const dismissedBefore = await dismissInterruptions(page, snapshot, currentStep, 2);
                 if (dismissedBefore || (snapshot.overlays && snapshot.overlays.length > 0)) {
                     try {
                         snapshot = await getDOMSnapshot(page);
@@ -696,7 +819,7 @@ export default async function autonomousLoop(page, goal, { signal, onStateChange
 
                 // Handle overlays that appeared after action
                 if (verification.overlayAppeared) {
-                    await dismissInterruptions(page, 2);
+                    await dismissInterruptions(page, afterSnapshot, currentStep, 2);
                 }
             }
 

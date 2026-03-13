@@ -41,9 +41,31 @@ const AD_BLOCK_PATTERNS = [
     '/aclk?',
 ];
 
+const EXPLICIT_BLOCK_RULES = [
+    { host: 'workspace.google.com', pathPrefix: '/intl/en-us/gmail' },
+];
+
 function isAdOrSponsoredRequest(url = '') {
     const u = String(url || '').toLowerCase();
     return AD_BLOCK_PATTERNS.some((p) => u.includes(p));
+}
+
+function isExplicitlyBlockedSite(url = '') {
+    try {
+        const parsed = new URL(String(url || ''));
+        const host = parsed.hostname.toLowerCase();
+        const path = parsed.pathname.toLowerCase();
+
+        return EXPLICIT_BLOCK_RULES.some((rule) => {
+            const hostMatch = host === rule.host || host.endsWith(`.${rule.host}`);
+            if (!hostMatch) return false;
+            if (!rule.pathPrefix) return true;
+            return path.startsWith(rule.pathPrefix);
+        });
+    } catch {
+        const u = String(url || '').toLowerCase();
+        return u.includes('workspace.google.com/intl/en-us/gmail');
+    }
 }
 
 class BrowserManager {
@@ -118,6 +140,13 @@ class BrowserManager {
                 const type = req.resourceType();
                 const nav = req.isNavigationRequest();
                 const blocked = isAdOrSponsoredRequest(url);
+                const explicitlyBlocked = isExplicitlyBlockedSite(url);
+
+                // Explicit site rules should block all request types, including documents.
+                if (explicitlyBlocked) {
+                    await route.abort('blockedbyclient').catch(() => route.abort());
+                    return;
+                }
 
                 // Never block first-party document loads unless the target is a known ad redirect endpoint.
                 const isAdRedirectDoc = nav && (
